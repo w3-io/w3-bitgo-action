@@ -1,6 +1,6 @@
 # W3 BitGo Action
 
-BitGo institutional custody for W3 workflows. Custodial wallet management, sends with auto-detected TSS or multi-sig dispatch, policy-engine approval workflows, transfers, and webhooks. 27 commands across the full BitGo coin catalog.
+BitGo institutional custody for W3 workflows. Custodial wallet management, sends with auto-detected TSS or multi-sig dispatch, **batch sends**, **token transfers** (ERC-20, etc.), policy-engine approval workflows, transfers, and webhooks. 27 commands across the full BitGo coin catalog.
 
 ## Quick start
 
@@ -25,8 +25,17 @@ The recommended pattern uses the W3 protocol's native `crypto:` syscall to compu
     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
     coin: hteth
     wallet-id: ${{ secrets.BITGO_WALLET_ID }}
+    # Single recipient (shortcut)
     address: '0x...'
     amount: '1000000000000000'
+    # — OR — batch send (mutually exclusive with address/amount)
+    # recipients: |
+    #   [
+    #     {"address": "0xAlice", "amount": "5000000000000000000"},
+    #     {"address": "0xBob",   "amount": "3000000000000000000"}
+    #   ]
+    # For ERC-20 / token sends, use the BitGo token coin code:
+    #   coin: hteth:tusdc
 
 - uses: w3-io/w3-bitgo-action@v0
   with:

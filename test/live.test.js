@@ -106,6 +106,34 @@ describe('live: read-only endpoint sweep', { skip, todo: skip ? reason : undefin
 })
 
 describe(
+  'live: batch send (multi-recipient)',
+  { skip, todo: skip ? reason : undefined },
+  () => {
+    it('accepts a recipients array with two entries via the same path', async () => {
+      const c = client()
+      await c.unlock({ otp: OTP, duration: 600 })
+
+      const wallet = await c.getWallet(COIN, WALLET_ID)
+      const receiveAddress =
+        wallet.receiveAddress?.address || wallet.coinSpecific?.baseAddress
+      assert.ok(receiveAddress, 'wallet must have a receive address')
+
+      const sendResult = await c.send(COIN, WALLET_ID, {
+        recipients: [
+          { address: receiveAddress, amount: '1000000000000' },
+          { address: receiveAddress, amount: '2000000000000' },
+        ],
+        comment: 'w3-bitgo-action live batch test',
+      })
+
+      assert.equal(sendResult.status, 'pending-approval')
+      assert.ok(sendResult.pendingApprovalId || sendResult.txRequestId)
+      assert.ok(sendResult.correlationId)
+    })
+  },
+)
+
+describe(
   'live: end-to-end send (self-send, exercises tx/initiate or txrequests)',
   { skip, todo: skip ? reason : undefined },
   () => {

@@ -145,16 +145,20 @@ const handlers = {
 
   'send-transaction': async () => {
     const client = getClient()
+    // Either `recipients` (JSON array, batch) or `address`+`amount`
+    // (single-recipient shortcut) must be provided. Validation lives
+    // in normalizeRecipients() inside the client.
     const result = await client.send(
       core.getInput('coin', { required: true }),
       core.getInput('wallet-id', { required: true }),
       {
-        address: core.getInput('address', { required: true }),
-        amount: core.getInput('amount', { required: true }),
+        address: core.getInput('address') || undefined,
+        amount: core.getInput('amount') || undefined,
+        recipients: core.getInput('recipients') || undefined,
         comment: core.getInput('comment') || undefined,
         sequenceId: core.getInput('sequence-id') || undefined,
         correlationId: core.getInput('correlation-id') || undefined,
-        registerWebhookOnPending: core.getBooleanInput('register-webhook-on-pending') || undefined,
+        registerWebhookOnPending: core.getInput('register-webhook-on-pending') === 'true',
         webhookUrl: core.getInput('webhook-url') || undefined,
       },
     )

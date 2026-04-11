@@ -216,6 +216,150 @@ describe('send: multi-sig (onchain) custodial path', () => {
   })
 })
 
+// ── Multi-recipient batch sends ─────────────────────────────────
+
+describe('send: multi-recipient batch (multi-sig path)', () => {
+  it('forwards a recipients array to /tx/initiate as-is', async () => {
+    mockFetch([
+      { body: { id: 'w1', type: 'custodial', multisigType: 'onchain' } },
+      { body: { pendingApproval: { id: 'pa-batch' } } },
+    ])
+
+    const result = await newClient().send('hteth', 'w1', {
+      recipients: [
+        { address: '0xAlice', amount: '1000' },
+        { address: '0xBob', amount: '2000' },
+        { address: '0xCarol', amount: '3000' },
+      ],
+    })
+
+    const body = JSON.parse(calls[1].options.body)
+    assert.equal(body.recipients.length, 3)
+    assert.deepEqual(body.recipients[0], { address: '0xAlice', amount: '1000' })
+    assert.deepEqual(body.recipients[2], { address: '0xCarol', amount: '3000' })
+    assert.equal(result.pendingApprovalId, 'pa-batch')
+  })
+
+  it('accepts a JSON-string recipients input (workflow author convenience)', async () => {
+    mockFetch([
+      { body: { id: 'w1', type: 'custodial', multisigType: 'onchain' } },
+      { body: { pendingApproval: { id: 'pa-1' } } },
+    ])
+
+    await newClient().send('hteth', 'w1', {
+      recipients: '[{"address":"0xAlice","amount":"1000"},{"address":"0xBob","amount":"2000"}]',
+    })
+
+    const body = JSON.parse(calls[1].options.body)
+    assert.equal(body.recipients.length, 2)
+    assert.equal(body.recipients[0].address, '0xAlice')
+  })
+
+  it('rejects invalid JSON in recipients string', async () => {
+    await assert.rejects(
+      () => newClient().send('hteth', 'w1', { recipients: 'not-json' }),
+      (err) => err instanceof BitGoError && err.code === 'INVALID_RECIPIENTS',
+    )
+  })
+
+  it('rejects an empty recipients array', async () => {
+    await assert.rejects(
+      () => newClient().send('hteth', 'w1', { recipients: [] }),
+      (err) => err instanceof BitGoError && err.code === 'INVALID_RECIPIENTS',
+    )
+  })
+
+  it('rejects a recipient missing address', async () => {
+    await assert.rejects(
+      () => newClient().send('hteth', 'w1', { recipients: [{ amount: '100' }] }),
+      (err) => err instanceof BitGoError && err.code === 'INVALID_RECIPIENTS',
+    )
+  })
+
+  it('rejects a recipient missing amount', async () => {
+    await assert.rejects(
+      () => newClient().send('hteth', 'w1', { recipients: [{ address: '0xAlice' }] }),
+      (err) => err instanceof BitGoError && err.code === 'INVALID_RECIPIENTS',
+    )
+  })
+})
+
+describe('send: multi-recipient batch (TSS path)', () => {
+  it('maps each recipient into the nested intent shape', async () => {
+    mockFetch([
+      { body: { id: 'w1', type: 'custodial', multisigType: 'tss' } },
+      { body: { txRequestId: 'tr-batch' } },
+    ])
+
+    const result = await newClient().send('hteth', 'w1', {
+      recipients: [
+        { address: '0xAlice', amount: '1000' },
+        { address: '0xBob', amount: '2000' },
+      ],
+    })
+
+    const body = JSON.parse(calls[1].options.body)
+    assert.equal(body.intent.recipients.length, 2)
+    assert.deepEqual(body.intent.recipients[0], {
+      address: { address: '0xAlice' },
+      amount: { value: '1000', symbol: 'hteth' },
+    })
+    assert.equal(result.txRequestId, 'tr-batch')
+  })
+
+  it('propagates a token coin into each recipient amount.symbol', async () => {
+    mockFetch([
+      { body: { id: 'w1', type: 'custodial', multisigType: 'tss' } },
+      { body: { txRequestId: 'tr-tok' } },
+    ])
+
+    await newClient().send('hteth:tusdc', 'w1', {
+      recipients: [{ address: '0xAlice', amount: '1000000' }],
+    })
+
+    const body = JSON.parse(calls[1].options.body)
+    assert.equal(body.intent.recipients[0].amount.symbol, 'hteth:tusdc')
+  })
+})
+
+// ── Token sends ─────────────────────────────────────────────────
+
+describe('send: token coins', () => {
+  it('routes multi-sig token sends to /:coin/wallet/:id/tx/initiate with the token coin in the path', async () => {
+    mockFetch([
+      { body: { id: 'w1', type: 'custodial', multisigType: 'onchain' } },
+      { body: { pendingApproval: { id: 'pa-tok' } } },
+    ])
+
+    await newClient().send('hteth:tusdc', 'w1', {
+      address: '0xAlice',
+      amount: '1000000',
+    })
+
+    // Wallet detection uses the same coin path
+    assert.equal(calls[0].url, `${API_URL}/hteth:tusdc/wallet/w1`)
+    // tx/initiate uses the token coin in the path
+    assert.equal(calls[1].url, `${API_URL}/hteth:tusdc/wallet/w1/tx/initiate`)
+  })
+
+  it('routes TSS token sends to /wallet/:id/txrequests with the token symbol', async () => {
+    mockFetch([
+      { body: { id: 'w1', type: 'custodial', multisigType: 'tss' } },
+      { body: { txRequestId: 'tr-tok' } },
+    ])
+
+    await newClient().send('hteth:tusdc', 'w1', {
+      address: '0xAlice',
+      amount: '1000000',
+    })
+
+    // TSS path has no coin prefix on the URL
+    assert.equal(calls[1].url, `${API_URL}/wallet/w1/txrequests`)
+    const body = JSON.parse(calls[1].options.body)
+    assert.equal(body.intent.recipients[0].amount.symbol, 'hteth:tusdc')
+  })
+})
+
 // ── Wallet-type validation ──────────────────────────────────────
 
 describe('send: wallet-type validation', () => {

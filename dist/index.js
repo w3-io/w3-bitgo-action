@@ -28040,7 +28040,7 @@ class BitGoClient {
    * @param {string} [opts.apiUrl] - API base URL override
    * @param {number} [opts.timeout] - Per-request timeout in ms (default 30000)
    */
-  constructor({ accessToken, enterpriseId, apiUrl = DEFAULT_API_URL, timeout = 30_000 } = {}) {
+  constructor({ accessToken, enterpriseId, apiUrl = DEFAULT_API_URL, timeout = 90_000 } = {}) {
     if (!accessToken) {
       throw new BitGoError(
         'MISSING_ACCESS_TOKEN',
@@ -28275,6 +28275,17 @@ class BitGoClient {
   /**
    * Custodial send — dispatches on the wallet's `multisigType`.
    *
+   * Single-recipient and batch (multi-recipient) sends use the same
+   * underlying endpoint on each path. The caller supplies either a
+   * single `address`+`amount` pair (single-recipient shortcut) OR a
+   * full `recipients` array (one or more entries). When `recipients`
+   * is provided it takes precedence — `address`/`amount` are ignored.
+   *
+   * Token sends work transparently: pass the token coin code as
+   * `coin` (e.g. `hteth:tusdc` for Holesky test USDC) and the action
+   * routes to the right token endpoint. The token symbol is also
+   * propagated into the TSS intent's `amount.symbol` field.
+   *
    * Both paths produce a `pendingApproval` that BitGo's signing
    * infrastructure resolves asynchronously. The caller can return
    * immediately with the approval ID (default), poll synchronously
@@ -28296,6 +28307,7 @@ class BitGoClient {
     {
       address,
       amount,
+      recipients,
       comment,
       sequenceId,
       correlationId,
@@ -28305,8 +28317,10 @@ class BitGoClient {
   ) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
-    requireParam('address', address)
-    requireParam('amount', amount)
+
+    // Normalize recipients: explicit array wins, otherwise build a
+    // single-recipient array from address+amount.
+    const normalizedRecipients = normalizeRecipients({ recipients, address, amount })
 
     await this._validateCustodialWallet(coin, walletId)
     const { multisigType } = await this.detectWalletType(coin, walletId)
@@ -28320,15 +28334,14 @@ class BitGoClient {
     if (multisigType === 'tss') {
       // TSS path: POST /wallet/:id/txrequests with the nested intent.
       // Note no coin prefix — BitGo identifies the coin from the
-      // wallet ID itself for this endpoint.
+      // wallet ID itself for this endpoint. The token symbol is
+      // propagated into each recipient's amount object.
       const intent = {
         intentType: 'payment',
-        recipients: [
-          {
-            address: { address },
-            amount: { value: String(amount), symbol: coin },
-          },
-        ],
+        recipients: normalizedRecipients.map((r) => ({
+          address: { address: r.address },
+          amount: { value: String(r.amount), symbol: coin },
+        })),
       }
       if (finalComment) intent.comment = finalComment
       if (sequenceId) intent.sequenceId = sequenceId
@@ -28341,8 +28354,12 @@ class BitGoClient {
     } else {
       // Multi-sig path: POST /:coin/wallet/:id/tx/initiate with a
       // flat recipients array. Returns 200 with `{ error, pendingApproval }`.
+      // For token sends, the coin in the path identifies the token.
       const body = {
-        recipients: [{ address, amount: String(amount) }],
+        recipients: normalizedRecipients.map((r) => ({
+          address: r.address,
+          amount: String(r.amount),
+        })),
       }
       if (finalComment) body.comment = finalComment
       if (sequenceId) body.sequenceId = sequenceId
@@ -28685,6 +28702,64 @@ function composeComment(userComment, correlationId) {
 }
 
 /**
+ * Normalize the recipients input for `send()`.
+ *
+ * Three input shapes are supported:
+ *   1. `recipients: [{ address, amount }, ...]` — explicit array
+ *   2. `recipients: '[...JSON...]'`             — JSON string (workflow author convenience)
+ *   3. `address`+`amount`                       — single-recipient shortcut
+ *
+ * Always returns a non-empty array of `{ address, amount }` objects.
+ * Throws BitGoError on invalid or empty inputs.
+ */
+function normalizeRecipients({ recipients, address, amount }) {
+  // Explicit recipients takes precedence over the address/amount shortcut.
+  if (recipients !== undefined && recipients !== null && recipients !== '') {
+    let arr = recipients
+    if (typeof arr === 'string') {
+      try {
+        arr = JSON.parse(arr)
+      } catch (err) {
+        throw new BitGoError(
+          'INVALID_RECIPIENTS',
+          `recipients must be a JSON array or array literal: ${err.message}`,
+        )
+      }
+    }
+    if (!Array.isArray(arr) || arr.length === 0) {
+      throw new BitGoError(
+        'INVALID_RECIPIENTS',
+        'recipients must be a non-empty array of { address, amount } objects',
+      )
+    }
+    for (const [i, r] of arr.entries()) {
+      if (
+        !r ||
+        typeof r !== 'object' ||
+        !r.address ||
+        r.amount === undefined ||
+        r.amount === null
+      ) {
+        throw new BitGoError(
+          'INVALID_RECIPIENTS',
+          `recipients[${i}] must have non-empty 'address' and 'amount' fields`,
+        )
+      }
+    }
+    return arr
+  }
+
+  // Single-recipient shortcut.
+  if (!address) {
+    throw new BitGoError('MISSING_ADDRESS', 'address is required (or pass recipients)')
+  }
+  if (amount === undefined || amount === null || amount === '') {
+    throw new BitGoError('MISSING_AMOUNT', 'amount is required (or pass recipients)')
+  }
+  return [{ address, amount }]
+}
+
+/**
  * Helper: throw a structured BitGoError when a required input is missing.
  */
 function requireParam(name, value) {
@@ -28841,16 +28916,20 @@ const handlers = {
 
   'send-transaction': async () => {
     const client = getClient()
+    // Either `recipients` (JSON array, batch) or `address`+`amount`
+    // (single-recipient shortcut) must be provided. Validation lives
+    // in normalizeRecipients() inside the client.
     const result = await client.send(
       lib_core.getInput('coin', { required: true }),
       lib_core.getInput('wallet-id', { required: true }),
       {
-        address: lib_core.getInput('address', { required: true }),
-        amount: lib_core.getInput('amount', { required: true }),
+        address: lib_core.getInput('address') || undefined,
+        amount: lib_core.getInput('amount') || undefined,
+        recipients: lib_core.getInput('recipients') || undefined,
         comment: lib_core.getInput('comment') || undefined,
         sequenceId: lib_core.getInput('sequence-id') || undefined,
         correlationId: lib_core.getInput('correlation-id') || undefined,
-        registerWebhookOnPending: lib_core.getBooleanInput('register-webhook-on-pending') || undefined,
+        registerWebhookOnPending: lib_core.getInput('register-webhook-on-pending') === 'true',
         webhookUrl: lib_core.getInput('webhook-url') || undefined,
       },
     )

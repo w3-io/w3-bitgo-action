@@ -47,10 +47,17 @@ inputs:
 
   # Send + transfer inputs
   address:
-    description: 'Destination address for send-transaction'
+    description: 'Destination address for send-transaction (single-recipient shortcut)'
     required: false
   amount:
-    description: 'Amount in base units (satoshis for BTC, wei for ETH, lamports for SOL, etc.)'
+    description: 'Amount in base units (satoshis for BTC, wei for ETH, lamports for SOL, etc.) for single-recipient sends'
+    required: false
+  recipients:
+    description: >-
+      JSON array of recipients for batch sends:
+      [{"address": "0x...", "amount": "1000"}, {"address": "0x...", "amount": "2000"}].
+      When provided, takes precedence over address/amount. Works on both TSS and multi-sig
+      wallets, and on both native and token coins (e.g. coin: hteth:tusdc for tokens).
     required: false
   comment:
     description: 'Optional comment to attach to a send. The action embeds the correlation-id automatically.'
