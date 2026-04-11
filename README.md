@@ -65,7 +65,7 @@ Set `register-webhook-on-pending: true` and supply `webhook-url` on `send-transa
 
 This action drives the BitGo platform REST API. It supports **custodial wallets** of both signing models — TSS (MPC) and on-chain multi-sig — because BitGo holds the keys and signs server-side. It does **not** support self-managed (hot/cold) wallets, which require BitGo Express running as a sidecar or `@bitgo/sdk-core` bundled in-process. Hot wallets fail fast with `UNSUPPORTED_WALLET_TYPE` rather than producing confusing API errors.
 
-This was a deliberate scoping decision validated against the live BitGo platform API. See [`docs/future-native-syscall.md`](docs/future-native-syscall.md) for the long-term direction (BitGo as a native protocol syscall) and the trade-offs involved.
+This was a deliberate scoping decision validated against the live BitGo platform API. The action layer is the right home for BitGo — its surface is broad and partner-managed, which is exactly what `uses:` actions are for. Operations that need protocol-level secret handling (TOTP for unlock) chain a native `crypto:` syscall upstream; the BitGo action only ever sees ephemeral, single-use credentials.
 
 ## Inputs
 

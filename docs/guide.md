@@ -4,7 +4,7 @@ Custodial-wallet treasury automation against BitGo's platform REST API. 27 comma
 
 ## Scope
 
-This action drives **BitGo custodial wallets only** — both signing models (TSS / MPC and on-chain multi-sig). BitGo holds the keys and signs server-side. Hot and cold (self-managed) wallets need BitGo Express running as a sidecar or `@bitgo/sdk-core` bundled in-process; this action fails fast on them with `UNSUPPORTED_WALLET_TYPE` rather than producing confusing API errors. See [`docs/future-native-syscall.md`](future-native-syscall.md) for the long-term design direction (BitGo as a native protocol syscall).
+This action drives **BitGo custodial wallets only** — both signing models (TSS / MPC and on-chain multi-sig). BitGo holds the keys and signs server-side. Hot and cold (self-managed) wallets need BitGo Express running as a sidecar or `@bitgo/sdk-core` bundled in-process; this action fails fast on them with `UNSUPPORTED_WALLET_TYPE` rather than producing confusing API errors.
 
 ## Common inputs
 
