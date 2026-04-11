@@ -27915,6 +27915,8 @@ function createMockCore() {
 
 
 
+// EXTERNAL MODULE: external "node:crypto"
+var external_node_crypto_ = __nccwpck_require__(7598);
 ;// CONCATENATED MODULE: ./src/bitgo.js
 /**
  * BitGo API client.
@@ -27937,7 +27939,16 @@ function createMockCore() {
 
 
 
+
 const DEFAULT_API_URL = 'https://app.bitgo.com/api/v2'
+
+/**
+ * Wallet types we know how to sign for. Cold wallets and BLS DKG
+ * (ETH2 validator) wallets need separate signing flows that v0
+ * doesn't support — we throw a clear error early rather than let
+ * the API reject the request with a confusing message.
+ */
+const SIGNABLE_WALLET_TYPES = new Set(['tss', 'onchain'])
 
 /**
  * BitGo-specific error type. Extends W3ActionError so action-core's
@@ -28167,7 +28178,346 @@ class BitGoClient {
     })
   }
 
-  // Stub methods for tiers 2-4 land in subsequent commits.
+  // ── Tier 2: Transactions and signing ─────────────────────────────
+
+  /**
+   * Build an unsigned transaction. Selects UTXOs (UTXO coins) or
+   * fetches the next nonce (account coins) as appropriate. The
+   * returned object includes a `txHex` or `tx` plus fee information.
+   * No signing happens here — see sendTransaction for the build +
+   * sign + broadcast path.
+   */
+  async buildTransaction(coin, walletId, { address, amount, feeRate } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('address', address)
+    requireParam('amount', amount)
+
+    const body = {
+      recipients: [{ address, amount: String(amount) }],
+    }
+    if (feeRate !== undefined && feeRate !== null && feeRate !== '') {
+      body.feeRate = String(feeRate)
+    }
+
+    return this._request(`/${coin}/wallet/${walletId}/tx/build`, {
+      method: 'POST',
+      body,
+    })
+  }
+
+  /**
+   * Build, sign, and broadcast a transaction.
+   *
+   * Auto-detects wallet type (TSS vs on-chain multi-sig) at runtime
+   * and validates that v0 supports it. Both supported types use the
+   * same `sendcoins` endpoint — BitGo's server handles the signing
+   * model selection. The detect call exists to fail fast on cold
+   * wallets and BLS DKG wallets, which need different signing paths
+   * not yet supported.
+   *
+   * If BitGo returns a pendingApproval response (the policy engine
+   * intercepted the tx), we translate it into our standard
+   * `{ status: "pending-approval", pendingApprovalId, correlationId }`
+   * shape and optionally auto-register a webhook for Layer 3
+   * async continuation.
+   */
+  async sendTransaction(
+    coin,
+    walletId,
+    {
+      address,
+      amount,
+      walletPassphrase,
+      feeRate,
+      comment,
+      correlationId,
+      registerWebhookOnPending,
+      webhookUrl,
+    } = {},
+  ) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('address', address)
+    requireParam('amount', amount)
+    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+
+    await this._validateWalletForSigning(coin, walletId)
+
+    const finalCorrelationId = correlationId || (0,external_node_crypto_.randomUUID)()
+    const body = {
+      address,
+      amount: String(amount),
+      walletPassphrase: walletPassphrase || this.walletPassphrase,
+      // Embed correlation ID in the comment so a future webhook can
+      // extract it. Use a stable marker prefix so the webhook
+      // receiver knows where to look.
+      comment: composeComment(comment, finalCorrelationId),
+    }
+    if (feeRate !== undefined && feeRate !== null && feeRate !== '') {
+      body.feeRate = String(feeRate)
+    }
+
+    const result = await this._request(`/${coin}/wallet/${walletId}/sendcoins`, {
+      method: 'POST',
+      body,
+    })
+
+    return this._handleSendResult(coin, walletId, result, {
+      correlationId: finalCorrelationId,
+      registerWebhookOnPending,
+      webhookUrl,
+    })
+  }
+
+  /**
+   * Batch send to multiple recipients in a single transaction. The
+   * caller passes the recipients array (and any other sendmany
+   * fields) via the `body` JSON input.
+   */
+  async sendMany(coin, walletId, { walletPassphrase, body, correlationId } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+    if (!body || typeof body !== 'object') {
+      throw new BitGoError('MISSING_BODY', 'send-many requires a JSON body with recipients')
+    }
+    if (!Array.isArray(body.recipients) || body.recipients.length === 0) {
+      throw new BitGoError(
+        'INVALID_BODY',
+        'send-many body must include a non-empty recipients array',
+      )
+    }
+
+    await this._validateWalletForSigning(coin, walletId)
+
+    const finalCorrelationId = correlationId || (0,external_node_crypto_.randomUUID)()
+    const payload = {
+      ...body,
+      walletPassphrase: walletPassphrase || this.walletPassphrase,
+      comment: composeComment(body.comment, finalCorrelationId),
+    }
+
+    const result = await this._request(`/${coin}/wallet/${walletId}/sendmany`, {
+      method: 'POST',
+      body: payload,
+    })
+
+    return this._handleSendResult(coin, walletId, result, {
+      correlationId: finalCorrelationId,
+    })
+  }
+
+  /**
+   * Speed up a stuck transaction. Uses RBF on Bitcoin and similar
+   * acceleration paths on EVM coins (replacement tx with higher
+   * gas/fee). The caller supplies the new fee rate.
+   */
+  async accelerateTransaction(coin, walletId, txId, { walletPassphrase, feeRate } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('tx-id', txId)
+    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+
+    await this._validateWalletForSigning(coin, walletId)
+
+    const body = {
+      walletPassphrase: walletPassphrase || this.walletPassphrase,
+      cpfpTxIds: [txId],
+    }
+    if (feeRate !== undefined && feeRate !== null && feeRate !== '') {
+      body.feeRate = String(feeRate)
+    }
+
+    return this._request(`/${coin}/wallet/${walletId}/accelerateTransaction`, {
+      method: 'POST',
+      body,
+    })
+  }
+
+  async getTransaction(coin, walletId, txId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('tx-id', txId)
+    return this._request(`/${coin}/wallet/${walletId}/tx/${txId}`)
+  }
+
+  async listTransactions(coin, walletId, { limit, prevId } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    return this._request(`/${coin}/wallet/${walletId}/tx`, {
+      query: { limit, prevId },
+    })
+  }
+
+  /**
+   * Consolidate UTXOs (UTXO coins only). BitGo will return a
+   * helpful error if called on an account-based coin like ETH.
+   */
+  async consolidate(coin, walletId, { walletPassphrase, body } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+
+    await this._validateWalletForSigning(coin, walletId)
+
+    const payload = {
+      ...(body || {}),
+      walletPassphrase: walletPassphrase || this.walletPassphrase,
+    }
+
+    return this._request(`/${coin}/wallet/${walletId}/consolidateUnspents`, {
+      method: 'POST',
+      body: payload,
+    })
+  }
+
+  async sweep(coin, walletId, { address, walletPassphrase } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('address', address)
+    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+
+    await this._validateWalletForSigning(coin, walletId)
+
+    return this._request(`/${coin}/wallet/${walletId}/sweep`, {
+      method: 'POST',
+      body: {
+        address,
+        walletPassphrase: walletPassphrase || this.walletPassphrase,
+      },
+    })
+  }
+
+  // ── Internal helpers ─────────────────────────────────────────────
+
+  /**
+   * Throw a clean BitGoError if the wallet's signing model isn't
+   * something v0 supports. The detect call is cached so this is
+   * essentially free for all but the first signing operation
+   * against a given wallet in a single action invocation.
+   */
+  async _validateWalletForSigning(coin, walletId) {
+    const type = await this.detectWalletType(coin, walletId)
+    if (!SIGNABLE_WALLET_TYPES.has(type)) {
+      throw new BitGoError(
+        'UNSUPPORTED_WALLET_TYPE',
+        `Wallet type "${type}" is not supported for signing in v0. Supported types: ${[...SIGNABLE_WALLET_TYPES].join(', ')}.`,
+      )
+    }
+    return type
+  }
+
+  /**
+   * Translate a BitGo send response into our standard shape.
+   *
+   * On success, BitGo returns a transaction object with `txid` (or
+   * `txHash` on EVM coins). On policy hold, BitGo returns a
+   * `pendingApproval` object — we surface that explicitly with
+   * `status: "pending-approval"` and the correlation ID so the
+   * workflow author can react via wait-for-approval (Layer 2) or
+   * wait for a webhook to fire a follow-up workflow (Layer 3).
+   */
+  async _handleSendResult(
+    coin,
+    walletId,
+    result,
+    { correlationId, registerWebhookOnPending, webhookUrl } = {},
+  ) {
+    const pendingApproval = result?.pendingApproval || result?.status === 'pendingApproval'
+
+    if (pendingApproval) {
+      // BitGo can return either { pendingApproval: { id, ... } } or
+      // a flatter shape with status==="pendingApproval". Cover both.
+      const pendingApprovalId =
+        result?.pendingApproval?.id || result?.pendingApprovalId || result?.id || null
+
+      // Optionally register a webhook so the future async receiver
+      // can fire a follow-up workflow when the approval resolves.
+      // Best-effort: a webhook registration failure does NOT mask
+      // the pending-approval result the caller cares about.
+      if (registerWebhookOnPending && webhookUrl) {
+        try {
+          await this.addWebhook(coin, walletId, {
+            url: webhookUrl,
+            type: 'pendingApproval',
+          })
+        } catch (err) {
+          // Surface the webhook failure as a side note in the result,
+          // but do not throw — the workflow already needs to handle
+          // the pending-approval state and the webhook is bonus.
+          return {
+            status: 'pending-approval',
+            pendingApprovalId,
+            correlationId,
+            webhookRegistration: {
+              attempted: true,
+              registered: false,
+              error: err?.message || String(err),
+            },
+            raw: result,
+          }
+        }
+        return {
+          status: 'pending-approval',
+          pendingApprovalId,
+          correlationId,
+          webhookRegistration: {
+            attempted: true,
+            registered: true,
+            url: webhookUrl,
+          },
+          raw: result,
+        }
+      }
+
+      return {
+        status: 'pending-approval',
+        pendingApprovalId,
+        correlationId,
+        raw: result,
+      }
+    }
+
+    // Sent: extract the canonical tx hash and surface as a stable shape.
+    const txHash =
+      result?.txid || result?.txHash || result?.transfer?.txid || result?.transfer?.txHash || null
+
+    return {
+      status: 'sent',
+      txHash,
+      correlationId,
+      raw: result,
+    }
+  }
+
+  /**
+   * Stub for Tier 4. The full implementation lands in the next
+   * commit; sendTransaction's auto-register-on-pending hook calls
+   * this method directly via `this.addWebhook(...)` so the wiring
+   * is in place from day one. Wired here so the type-checker
+   * (and tests) can exercise the call site.
+   */
+  async addWebhook(coin, walletId, { url, type = 'pendingApproval' } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('webhook-url', url)
+    return this._request(`/${coin}/wallet/${walletId}/webhooks`, {
+      method: 'POST',
+      body: { url, type },
+    })
+  }
+}
+
+/**
+ * Compose the BitGo `comment` field, embedding the correlation ID
+ * with a stable marker prefix the future webhook receiver can grep
+ * for. Preserves any user-supplied comment text.
+ */
+function composeComment(userComment, correlationId) {
+  const marker = `[w3-corr:${correlationId}]`
+  if (!userComment) return marker
+  return `${userComment} ${marker}`
 }
 
 /**
@@ -28281,6 +28631,120 @@ const handlers = {
       {
         limit: lib_core.getInput('limit') || undefined,
         prevId: lib_core.getInput('prev-id') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  // ── Tier 2: Transactions and signing ──────────────────────────
+
+  'build-transaction': async () => {
+    const client = getClient()
+    const result = await client.buildTransaction(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        address: lib_core.getInput('address', { required: true }),
+        amount: lib_core.getInput('amount', { required: true }),
+        feeRate: lib_core.getInput('fee-rate') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'send-transaction': async () => {
+    const client = getClient()
+    const result = await client.sendTransaction(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        address: lib_core.getInput('address', { required: true }),
+        amount: lib_core.getInput('amount', { required: true }),
+        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
+        feeRate: lib_core.getInput('fee-rate') || undefined,
+        comment: lib_core.getInput('comment') || undefined,
+        correlationId: lib_core.getInput('correlation-id') || undefined,
+        registerWebhookOnPending: lib_core.getInput('register-webhook-on-pending') === 'true',
+        webhookUrl: lib_core.getInput('webhook-url') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'send-many': async () => {
+    const client = getClient()
+    const body = parseJsonInput('body')
+    const result = await client.sendMany(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
+        body,
+        correlationId: lib_core.getInput('correlation-id') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'accelerate-transaction': async () => {
+    const client = getClient()
+    const result = await client.accelerateTransaction(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      lib_core.getInput('tx-id', { required: true }),
+      {
+        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
+        feeRate: lib_core.getInput('fee-rate') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'get-transaction': async () => {
+    const client = getClient()
+    const result = await client.getTransaction(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      lib_core.getInput('tx-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-transactions': async () => {
+    const client = getClient()
+    const result = await client.listTransactions(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        limit: lib_core.getInput('limit') || undefined,
+        prevId: lib_core.getInput('prev-id') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  consolidate: async () => {
+    const client = getClient()
+    const body = lib_core.getInput('body') ? parseJsonInput('body') : undefined
+    const result = await client.consolidate(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
+        body,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  sweep: async () => {
+    const client = getClient()
+    const result = await client.sweep(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        address: lib_core.getInput('address', { required: true }),
+        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
       },
     )
     setJsonOutput('result', result)

@@ -102,6 +102,120 @@ const handlers = {
     )
     setJsonOutput('result', result)
   },
+
+  // ── Tier 2: Transactions and signing ──────────────────────────
+
+  'build-transaction': async () => {
+    const client = getClient()
+    const result = await client.buildTransaction(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        address: core.getInput('address', { required: true }),
+        amount: core.getInput('amount', { required: true }),
+        feeRate: core.getInput('fee-rate') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'send-transaction': async () => {
+    const client = getClient()
+    const result = await client.sendTransaction(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        address: core.getInput('address', { required: true }),
+        amount: core.getInput('amount', { required: true }),
+        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
+        feeRate: core.getInput('fee-rate') || undefined,
+        comment: core.getInput('comment') || undefined,
+        correlationId: core.getInput('correlation-id') || undefined,
+        registerWebhookOnPending: core.getInput('register-webhook-on-pending') === 'true',
+        webhookUrl: core.getInput('webhook-url') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'send-many': async () => {
+    const client = getClient()
+    const body = parseJsonInput('body')
+    const result = await client.sendMany(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
+        body,
+        correlationId: core.getInput('correlation-id') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'accelerate-transaction': async () => {
+    const client = getClient()
+    const result = await client.accelerateTransaction(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      core.getInput('tx-id', { required: true }),
+      {
+        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
+        feeRate: core.getInput('fee-rate') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'get-transaction': async () => {
+    const client = getClient()
+    const result = await client.getTransaction(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      core.getInput('tx-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-transactions': async () => {
+    const client = getClient()
+    const result = await client.listTransactions(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        limit: core.getInput('limit') || undefined,
+        prevId: core.getInput('prev-id') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  consolidate: async () => {
+    const client = getClient()
+    const body = core.getInput('body') ? parseJsonInput('body') : undefined
+    const result = await client.consolidate(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
+        body,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  sweep: async () => {
+    const client = getClient()
+    const result = await client.sweep(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        address: core.getInput('address', { required: true }),
+        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
+      },
+    )
+    setJsonOutput('result', result)
+  },
 }
 
 const router = createCommandRouter(handlers)
