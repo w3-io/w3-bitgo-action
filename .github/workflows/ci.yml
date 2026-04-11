@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -14,10 +18,23 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@w3-io'
 
+      # NOTE: This currently fails with 403 read_package because
+      # @w3-io/action-core is a private package in w3-io/action-core
+      # and this repo (w3-bitgo-action) is public. The default
+      # GITHUB_TOKEN does not have cross-repo package read access.
+      # Fix: an admin needs to add w3-bitgo-action to the package's
+      # "Manage Actions access" list at
+      # https://github.com/orgs/w3-io/packages/npm/package/action-core/settings
+      # All other w3 actions hit the same issue — same fix benefits the
+      # whole ecosystem.
       - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Format check
         run: npm run format:check
@@ -29,11 +46,11 @@ jobs:
         run: npm test
 
       - name: Build
-        run: npm run package
+        run: npm run build
 
       - name: Verify dist is up to date
         run: |
           git diff --exit-code dist/ || {
-            echo "dist/ is out of date. Run 'npm run package' and commit."
+            echo "dist/ is out of date. Run 'npm run build' and commit."
             exit 1
           }

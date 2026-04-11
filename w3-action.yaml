@@ -1,44 +1,323 @@
-# TODO: This file describes your action for the W3 MCP server.
-# AI agents use this to discover your action, understand its commands,
-# and generate correct workflow YAML. Keep it in sync with action.yml.
-#
-# On release, this file is synced to the MCP's registry.yaml.
+kind: integration
+partner: bitgo
+name: BitGo Integration
+version: 0.1.0
+repo: w3-io/w3-bitgo-action
 
-kind: integration              # integration | primitive | utility
-partner: yourpartner           # TODO: machine-readable partner ID
-name: YourPartner Integration  # TODO: human-readable name
-version: 1.0.0
-repo: w3-io/w3-yourpartner-action  # TODO: your repo
+description: >
+  BitGo institutional custody and signing across the full BitGo coin
+  catalog. Wallet management, TSS and multi-sig transactions with
+  runtime auto-detection, policy approval workflows, and webhook
+  registration.
+
+context: >
+  Use BitGo when a workflow needs regulated qualified custody, advanced
+  policy/quorum approval workflows, or signing across the long tail of
+  coins BitGo supports. The action auto-detects wallet type (TSS or
+  on-chain multi-sig) at runtime so callers don't have to know which
+  signing model a wallet uses. Transactions that hit a policy rule are
+  returned as pending-approval with a correlation ID — workflows can
+  either exit and react to a future webhook (Layer 3) or call
+  wait-for-approval to block synchronously (Layer 2).
 
 commands:
-  # TODO: Define each command your action supports. Example:
-  #
-  # - name: inspect
-  #   description: >
-  #     Risk assessment for a blockchain address. Returns per-chain
-  #     scores for fraud, compliance, and cyber risk.
-  #   inputs:
-  #     address:
-  #       type: string
-  #       required: true
-  #       description: Blockchain address to inspect
-  #     chain-id:
-  #       type: string
-  #       required: false
-  #       description: Filter to a specific chain
-  #   outputs:
-  #     result:
-  #       type: object
-  #       description: Full risk score breakdown
-
-  - name: example-command
-    description: TODO - describe what this command does
+  # ── Tier 1: Wallet management ──────────────────────────────────────
+  - name: list-wallets
+    description: List wallets in the enterprise.
     inputs:
-      input:
-        type: string
-        required: true
-        description: TODO - describe this input
+      coin: { type: string, required: true, description: Coin ticker }
+      enterprise-id: { type: string, required: false, description: Enterprise ID scope }
+      limit: { type: number, required: false, description: Result limit }
+      prev-id: { type: string, required: false, description: Pagination cursor }
+    outputs:
+      result: { type: object, description: 'Wallet list with pagination cursor' }
+
+  - name: get-wallet
+    description: Get wallet details (balance, type, policies, m/n).
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+    outputs:
+      result: { type: object, description: 'Full wallet object' }
+
+  - name: create-wallet
+    description: Create a new wallet. Use the body input for the full creation config (label, type, passphrase, m, n, etc.).
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      enterprise-id: { type: string, required: false, description: Enterprise ID }
+      body:
+        { type: string, required: true, description: 'JSON body with wallet creation parameters' }
+    outputs:
+      result: { type: object, description: 'Created wallet object' }
+
+  - name: share-wallet
+    description: Share a wallet with another BitGo user.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      share-with-user: { type: string, required: true, description: BitGo user ID to share with }
+      share-permissions:
+        {
+          type: string,
+          required: true,
+          description: 'Comma-separated permissions: view, spend, admin',
+        }
+    outputs:
+      result: { type: object, description: 'Wallet share record' }
+
+  - name: freeze-wallet
+    description: Time-bound freeze on a wallet.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      body: { type: string, required: false, description: 'JSON body with freeze duration' }
+    outputs:
+      result: { type: object, description: 'Freeze status' }
+
+  - name: get-balance
+    description: Get confirmed and spendable balance for a wallet.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+    outputs:
+      result: { type: object, description: 'Balance breakdown' }
+
+  - name: list-addresses
+    description: List addresses derived under a wallet.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      limit: { type: number, required: false, description: Result limit }
+      prev-id: { type: string, required: false, description: Pagination cursor }
+    outputs:
+      result: { type: object, description: 'Address list with pagination cursor' }
+
+  # ── Tier 2: Transactions and signing ───────────────────────────────
+  - name: build-transaction
+    description: Build an unsigned transaction. Selects UTXOs or fetches the next nonce as appropriate.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      address: { type: string, required: true, description: Destination address }
+      amount: { type: string, required: true, description: Amount in base units }
+      fee-rate: { type: string, required: false, description: Fee rate override }
+    outputs:
+      result: { type: object, description: 'Unsigned tx with fee + UTXO/nonce info' }
+
+  - name: send-transaction
+    description: >
+      Build, sign, and broadcast a transaction. Auto-detects wallet
+      type (TSS vs multi-sig) at runtime via detectWalletType. If the
+      transaction triggers a policy rule, returns
+      status="pending-approval" with the pendingApprovalId and a
+      correlation ID — see wait-for-approval (synchronous) and
+      register-webhook-on-pending (asynchronous) for follow-up patterns.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      address: { type: string, required: true, description: Destination address }
+      amount: { type: string, required: true, description: Amount in base units }
+      wallet-passphrase:
+        { type: string, required: true, description: 'Wallet passphrase for signing' }
+      fee-rate: { type: string, required: false, description: Fee rate override }
+      comment: { type: string, required: false, description: Optional comment }
+      correlation-id:
+        {
+          type: string,
+          required: false,
+          description: 'Optional correlation ID; auto-generated if omitted',
+        }
+      register-webhook-on-pending:
+        {
+          type: string,
+          required: false,
+          description: '"true" to auto-register a webhook against webhook-url when the tx hits pending approval',
+        }
+      webhook-url:
+        { type: string, required: false, description: Webhook URL for Layer 3 auto-registration }
     outputs:
       result:
-        type: object
-        description: TODO - describe the output shape
+        {
+          type: object,
+          description: 'Send result. On success: txHash, status="sent". On policy hold: status="pending-approval", pendingApprovalId, correlationId.',
+        }
+
+  - name: send-many
+    description: Batch send to multiple recipients in a single transaction.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      wallet-passphrase:
+        { type: string, required: true, description: 'Wallet passphrase for signing' }
+      body: { type: string, required: true, description: 'JSON body with recipients array' }
+      correlation-id: { type: string, required: false, description: 'Optional correlation ID' }
+    outputs:
+      result: { type: object, description: 'Send result, same shape as send-transaction' }
+
+  - name: accelerate-transaction
+    description: RBF (Bitcoin) or speed-up (EVM) for a stuck transaction.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      tx-id: { type: string, required: true, description: Transaction ID }
+      wallet-passphrase:
+        { type: string, required: true, description: 'Wallet passphrase for signing' }
+      fee-rate: { type: string, required: false, description: New fee rate }
+    outputs:
+      result: { type: object, description: 'Acceleration result' }
+
+  - name: get-transaction
+    description: Fetch a transaction by hash or BitGo tx ID.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      tx-id: { type: string, required: true, description: Transaction ID }
+    outputs:
+      result: { type: object, description: 'Transaction details' }
+
+  - name: list-transactions
+    description: List wallet transaction history.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      limit: { type: number, required: false, description: Result limit }
+      prev-id: { type: string, required: false, description: Pagination cursor }
+    outputs:
+      result: { type: object, description: 'Transaction list with pagination cursor' }
+
+  - name: consolidate
+    description: Consolidate UTXOs (UTXO coins only).
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      wallet-passphrase:
+        { type: string, required: true, description: 'Wallet passphrase for signing' }
+      body:
+        {
+          type: string,
+          required: false,
+          description: 'Optional JSON body with consolidation parameters',
+        }
+    outputs:
+      result: { type: object, description: 'Consolidation result' }
+
+  - name: sweep
+    description: Sweep entire balance to a target address.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      address: { type: string, required: true, description: Destination address }
+      wallet-passphrase:
+        { type: string, required: true, description: 'Wallet passphrase for signing' }
+    outputs:
+      result: { type: object, description: 'Sweep result' }
+
+  # ── Tier 3: Policy and approval ────────────────────────────────────
+  - name: list-policies
+    description: List policy rules attached to a wallet.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+    outputs:
+      result: { type: object, description: 'Policy rule list' }
+
+  - name: set-policy-rule
+    description: Add or update a policy rule (spending limit, velocity, allowlist, etc.).
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      body:
+        { type: string, required: true, description: 'JSON body with the policy rule definition' }
+    outputs:
+      result: { type: object, description: 'Updated policy' }
+
+  - name: remove-policy-rule
+    description: Remove a policy rule by ID.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      policy-rule-id: { type: string, required: true, description: Rule ID }
+    outputs:
+      result: { type: object, description: 'Updated policy' }
+
+  - name: list-pending-approvals
+    description: List pending approvals for a wallet or enterprise.
+    inputs:
+      wallet-id: { type: string, required: false, description: Wallet ID scope }
+      enterprise-id: { type: string, required: false, description: Enterprise ID scope }
+    outputs:
+      result: { type: object, description: 'Pending approval list' }
+
+  - name: approve-pending
+    description: Approve a pending tx or operation.
+    inputs:
+      pending-approval-id: { type: string, required: true, description: Pending approval ID }
+      wallet-passphrase:
+        {
+          type: string,
+          required: false,
+          description: 'Wallet passphrase if approving a tx that requires signing',
+        }
+    outputs:
+      result: { type: object, description: 'Resolved approval' }
+
+  - name: reject-pending
+    description: Reject a pending tx or operation.
+    inputs:
+      pending-approval-id: { type: string, required: true, description: Pending approval ID }
+    outputs:
+      result: { type: object, description: 'Resolved approval' }
+
+  # ── Layer 2: Synchronous wait ──────────────────────────────────────
+  - name: wait-for-approval
+    description: >
+      Block until a pending approval transitions to approved or rejected,
+      or until the timeout elapses. Polls every 5s with exponential
+      backoff capped at 30s. Returns the final state.
+    inputs:
+      pending-approval-id: { type: string, required: true, description: Pending approval ID }
+      timeout:
+        {
+          type: number,
+          required: false,
+          description: 'Max seconds to wait (default 300, max 3600)',
+        }
+    outputs:
+      result:
+        {
+          type: object,
+          description: 'Final state: approved | rejected | timeout. Includes txHash if approved and the transaction was a tx-signing approval.',
+        }
+
+  # ── Tier 4: Webhook registration ───────────────────────────────────
+  - name: add-webhook
+    description: Register a webhook against a wallet for transfer or pendingApproval events.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      webhook-url: { type: string, required: true, description: Callback URL }
+      webhook-type:
+        {
+          type: string,
+          required: false,
+          description: 'Event type: transfer | pendingApproval | address_confirmation (default pendingApproval)',
+        }
+    outputs:
+      result: { type: object, description: 'Created webhook' }
+
+  - name: list-webhooks
+    description: List webhooks attached to a wallet.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+    outputs:
+      result: { type: object, description: 'Webhook list' }
+
+  - name: remove-webhook
+    description: Remove a webhook by ID.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      webhook-id: { type: string, required: true, description: Webhook ID }
+    outputs:
+      result: { type: object, description: 'Removal confirmation' }

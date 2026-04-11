@@ -21,22 +21,22 @@ jobs:
       - id: hash
         crypto:
           keccak-256:
-            data: "48656c6c6f" # "Hello" in hex
+            data: '48656c6c6f' # "Hello" in hex
 
       # Sign the hash with Ed25519
       - id: sig
         crypto:
           ed25519-sign:
-            privateKey: "${{ secrets.SIGNING_KEY }}"
-            message: "${{ steps.hash.outputs.hash }}"
+            privateKey: '${{ secrets.SIGNING_KEY }}'
+            message: '${{ steps.hash.outputs.hash }}'
 
       # Verify the signature
       - id: verify
         crypto:
           ed25519-verify:
-            publicKey: "${{ secrets.PUBLIC_KEY }}"
-            message: "${{ steps.hash.outputs.hash }}"
-            signature: "${{ steps.sig.outputs.signature }}"
+            publicKey: '${{ secrets.PUBLIC_KEY }}'
+            message: '${{ steps.hash.outputs.hash }}'
+            signature: '${{ steps.sig.outputs.signature }}'
 
       # Use the results in a shell step
       - run: |
@@ -52,15 +52,15 @@ jobs:
       - id: encrypt
         crypto:
           aes-encrypt:
-            key: "${{ secrets.AES_KEY }}"
-            plaintext: "48656c6c6f" # "Hello" in hex
+            key: '${{ secrets.AES_KEY }}'
+            plaintext: '48656c6c6f' # "Hello" in hex
 
       # Decrypt it back
       - id: decrypt
         crypto:
           aes-decrypt:
-            key: "${{ secrets.AES_KEY }}"
-            ciphertext: "${{ steps.encrypt.outputs.ciphertext }}"
+            key: '${{ secrets.AES_KEY }}'
+            ciphertext: '${{ steps.encrypt.outputs.ciphertext }}'
 
       - run: echo "Decrypted ${{ steps.decrypt.outputs.plaintext }}"
 
@@ -72,9 +72,9 @@ jobs:
       - id: token
         crypto:
           jwt-create:
-            algorithm: "HS256"
+            algorithm: 'HS256'
             claims: '{"sub":"workflow","aud":"api.example.com","exp":9999999999}'
-            key: "${{ secrets.JWT_SECRET }}"
+            key: '${{ secrets.JWT_SECRET }}'
 
       # Use the JWT in an HTTP call
       - uses: w3-io/w3-actions/http@v0

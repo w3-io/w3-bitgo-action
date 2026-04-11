@@ -18,7 +18,7 @@ jobs:
         id: balance
         with:
           chain: ethereum
-          token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+          token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
           address: ${{ signer.address }}
 
       # Step 2: Approve USDC for vault
@@ -26,17 +26,17 @@ jobs:
         with:
           chain: ethereum
           token: USDC
-          spender: "0xVaultAddress"
-          amount: "1000"
+          spender: '0xVaultAddress'
+          amount: '1000'
 
       # Step 3: Deposit into vault
       - uses: evm/call-contract
         id: deposit
         with:
           chain: ethereum
-          contract: "0xVaultAddress"
-          method: "deposit(uint256,uint256,address)"
-          args: ["1000000000", "1", "${{ signer.address }}"]
+          contract: '0xVaultAddress'
+          method: 'deposit(uint256,uint256,address)'
+          args: ['1000000000', '1', '${{ signer.address }}']
           # Gas estimation handles complex vault interactions
           # Default 1.3x multiplier provides headroom
 

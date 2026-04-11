@@ -1,194 +1,146 @@
-# W3 Action Template
+# W3 BitGo Action
 
-Start here to build a new action for W3 workflows.
+BitGo institutional custody for W3 workflows. Custodial wallet management, sends with auto-detected TSS or multi-sig dispatch, **batch sends**, **token transfers** (ERC-20, etc.), policy-engine approval workflows, transfers, and webhooks. 27 commands across the full BitGo coin catalog.
 
-Actions built from this template work on both the W3 runtime and GitHub
-Actions runners — same YAML, both environments.
+## Quick start
 
-## Getting started
+The recommended pattern uses the W3 protocol's native `crypto:` syscall to compute the unlock OTP, so the TOTP secret never crosses the third-party action boundary:
 
-1. **Create your repo** from this template:
+```yaml
+- crypto:
+    totp:
+      secret: ${{ secrets.BITGO_TOTP_HEX }}
+  id: totp
 
-   ```bash
-   gh repo create w3-io/w3-yourpartner-action \
-     --public \
-     --template w3-io/w3-action-template \
-     --clone
-   cd w3-yourpartner-action
-   ```
+- uses: w3-io/w3-bitgo-action@v0
+  with:
+    command: unlock
+    access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+    otp: ${{ steps.totp.outputs.code }}
 
-2. **Set up GitHub Packages auth** (one-time, for `@w3-io/action-core`):
+- uses: w3-io/w3-bitgo-action@v0
+  id: send
+  with:
+    command: send-transaction
+    access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+    coin: hteth
+    wallet-id: ${{ secrets.BITGO_WALLET_ID }}
+    # Single recipient (shortcut)
+    address: '0x...'
+    amount: '1000000000000000'
+    # — OR — batch send (mutually exclusive with address/amount)
+    # recipients: |
+    #   [
+    #     {"address": "0xAlice", "amount": "5000000000000000000"},
+    #     {"address": "0xBob",   "amount": "3000000000000000000"}
+    #   ]
+    # For ERC-20 / token sends, use the BitGo token coin code:
+    #   coin: hteth:tusdc
 
-   ```bash
-   echo "//npm.pkg.github.com/:_authToken=$(gh auth token)" >> ~/.npmrc
-   echo "@w3-io:registry=https://npm.pkg.github.com" >> ~/.npmrc
-   ```
-
-3. **Install dependencies:**
-
-   ```bash
-   npm install
-   ```
-
-4. **Rename the placeholders.** Search for `TODO` across the codebase.
-   Main things to change:
-
-   - `action.yml` — your action's name, description, inputs, commands
-   - `src/index.js` — wire your commands into the router
-   - `src/client.js` — your API client (the core logic)
-   - `w3-action.yaml` — registry metadata for MCP discovery
-   - `README.md` — replace this with your action's docs
-
-5. **Write your client** in `src/client.js`. Keep it independent of
-   `@actions/core` so it can be imported directly by others.
-
-6. **Add commands** to `src/index.js`. Use the `createCommandRouter`
-   from `@w3-io/action-core`:
-
-   ```javascript
-   import { createCommandRouter, setJsonOutput, handleError } from '@w3-io/action-core'
-   import * as core from '@actions/core'
-   import { Client } from './client.js'
-
-   const router = createCommandRouter({
-     'my-command': async () => {
-       const client = new Client({ apiKey: core.getInput('api-key') })
-       const result = await client.myCommand(core.getInput('input'))
-       setJsonOutput('result', result)
-     },
-   })
-
-   router()
-   ```
-
-7. **Write tests** in `test/`. Use `node:test` and `node:assert`:
-
-   ```bash
-   npm test
-   ```
-
-8. **Build and verify:**
-
-   ```bash
-   npm run build     # bundle to dist/ with NCC
-   npm run all       # format + lint + test + build
-   ```
-
-9. **Commit dist/ and tag** a release:
-
-   ```bash
-   git add dist/ && git commit -m "Build dist"
-   git tag v0.1.0 && git tag v0
-   git push --tags
-   ```
-
-   Users reference your action as:
-
-   ```yaml
-   uses: w3-io/w3-yourpartner-action@v0
-   ```
-
-## What `@w3-io/action-core` gives you
-
-Every W3 action uses the shared library. Don't reinvent these:
-
-| Import | What it does |
-|--------|-------------|
-| `createCommandRouter` | Dispatches on the `command` input, handles unknown commands |
-| `setJsonOutput` | Serializes output exactly once (prevents double-encoding) |
-| `handleError` | Structured error reporting with codes and status |
-| `request` | HTTP with timeout, retry on 429/5xx, auth helpers |
-| `requireInput` | Throws with clear message if input is missing |
-| `parseJsonInput` | Parses JSON input with error handling |
-| `bridge` | Syscall bridge client for chain/crypto operations |
-
-### Using the bridge
-
-If your action needs blockchain or crypto operations, use the bridge
-instead of bundling SDKs:
-
-```javascript
-import { bridge } from '@w3-io/action-core'
-
-// Chain operations (ethereum, bitcoin, solana)
-const balance = await bridge.chain('ethereum', 'get-balance', { address })
-
-// Crypto primitives
-const hash = await bridge.crypto('keccak256', { data: '0xdeadbeef' })
+- uses: w3-io/w3-bitgo-action@v0
+  with:
+    command: wait-for-approval
+    access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+    pending-approval-id: ${{ fromJSON(steps.send.outputs.result).pendingApprovalId }}
+    timeout: '300'
 ```
 
-The bridge runs on the host — no `ethers`, `web3.js`, or WASM in your container.
+See [`docs/guide.md`](docs/guide.md) for the full per-command reference and the [BitGo Payroll cookbook recipe](https://github.com/w3-io/w3-mcp/blob/main/content/cookbook/bitgo-payroll-totp.md) for a complete monthly-payroll workflow.
 
-## Conventions
+## Commands
 
-### Inputs
+| Group                          | Commands                                                                                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Session**                    | `unlock`                                                                                                                                                               |
+| **Wallets**                    | `list-wallets`, `get-wallet`, `create-wallet`, `share-wallet`, `freeze-wallet`, `get-balance`, `list-addresses`, `create-address`, `maximum-spendable`, `fee-estimate` |
+| **Sends and tx queries**       | `send-transaction`, `get-transaction`, `list-transactions`, `get-transfer`, `list-transfers`                                                                           |
+| **TSS tx requests**            | `get-tx-request`, `list-tx-requests`                                                                                                                                   |
+| **Policy and approval**        | `list-policies`, `set-policy-rule`, `remove-policy-rule`, `list-pending-approvals`, `get-pending-approval`, `approve-pending`, `reject-pending`                        |
+| **Synchronous wait (Layer 2)** | `wait-for-approval`                                                                                                                                                    |
+| **Webhooks (Layer 3)**         | `add-webhook`, `list-webhooks`, `remove-webhook`                                                                                                                       |
 
-| Input | Convention |
-|-------|-----------|
-| `command` | Required. The operation to perform. |
-| `api-key` | API key. Always `api-key`, never `apikey` or `api_key`. |
-| `api-url` | Optional endpoint override for staging/testing. |
-| (others) | Plain names, no partner prefix. `address`, not `cube3-address`. |
+Set `register-webhook-on-pending: true` and supply `webhook-url` on `send-transaction` to auto-register a webhook against the wallet for Layer 3 async continuation.
 
-### Outputs
+## Custodial wallets only (v0)
 
-One output: `result`. Always JSON. Use `setJsonOutput('result', data)`.
+This action drives the BitGo platform REST API. It supports **custodial wallets** of both signing models — TSS (MPC) and on-chain multi-sig — because BitGo holds the keys and signs server-side. It does **not** support self-managed (hot/cold) wallets, which require BitGo Express running as a sidecar or `@bitgo/sdk-core` bundled in-process. Hot wallets fail fast with `UNSUPPORTED_WALLET_TYPE` rather than producing confusing API errors.
 
-### Errors
+This was a deliberate scoping decision validated against the live BitGo platform API. The action layer is the right home for BitGo — its surface is broad and partner-managed, which is exactly what `uses:` actions are for. Operations that need protocol-level secret handling (TOTP for unlock) chain a native `crypto:` syscall upstream; the BitGo action only ever sees ephemeral, single-use credentials.
 
-Use `handleError` from action-core. It sets structured error codes
-and calls `core.setFailed()`.
+## Inputs
 
-### File structure
+| Input           | Required          | Notes                                                                                                         |
+| --------------- | ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `command`       | yes               | One of the commands above.                                                                                    |
+| `access-token`  | yes               | BitGo access token. Sent as `Authorization: Bearer ...`.                                                      |
+| `enterprise-id` | sometimes         | Required for create/list operations scoped to an enterprise.                                                  |
+| `api-url`       | no                | Defaults to `https://app.bitgo.com/api/v2`. Use `https://app.bitgo-test.com/api/v2` for the test environment. |
+| `otp`           | for sensitive ops | Six-digit TOTP code from `crypto: totp` (or directly). Required by `unlock` and some approvals.               |
 
+Command-specific inputs (`coin`, `wallet-id`, `address`, `amount`, `tx-id`, `body`, `pending-approval-id`, `correlation-id`, `webhook-url`, etc.) are documented in [`docs/guide.md`](docs/guide.md).
+
+## Outputs
+
+A single `result` output, always a JSON string. Parse with `fromJSON()`:
+
+```yaml
+- run: |
+    echo "approval id = ${{ fromJSON(steps.send.outputs.result).pendingApprovalId }}"
+    echo "correlation = ${{ fromJSON(steps.send.outputs.result).correlationId }}"
 ```
-w3-yourpartner-action/
-├── README.md               # Quick Start, Commands, Inputs, Outputs, Auth
-├── action.yml              # GHA contract — inputs, outputs, runtime
-├── w3-action.yaml          # MCP registry metadata
-├── src/
-│   ├── index.js            # Command router (uses action-core)
-│   └── client.js           # Your API client
-├── test/
-│   └── client.test.js      # Tests (node:test)
-├── docs/
-│   └── guide.md            # Integration guide (synced to MCP)
-├── dist/
-│   └── index.js            # Bundled by NCC (committed)
-├── package.json            # NCC build, action-core dep
-└── .gitignore              # Includes .npmrc, excludes dist/
+
+The send result shape:
+
+```jsonc
+{
+  "status": "pending-approval",
+  "pendingApprovalId": "69da0b69be4ef029a9af54692439ee00",
+  "txRequestId": null, // populated on TSS path instead
+  "correlationId": "...",
+  "raw": {
+    /* full BitGo response */
+  },
+}
 ```
 
-### README structure
-
-Every action README follows this format:
-
-```markdown
-# W3 YourPartner Action
-One-line description.
-
-## Quick Start
-## Commands (table: command, description)
-## Inputs (table: name, required, default, description)
-## Outputs (table: name, description)
 ## Authentication
+
+1. **Access token** — issue from BitGo dashboard → Settings → Developer Options → Access Tokens. Store as `BITGO_ACCESS_TOKEN` secret. Test-environment tokens come from `app.bitgo-test.com` and don't work against production.
+2. **TOTP secret** — BitGo's authenticator setup gives you a base32 string. Convert it to hex once (`echo -n 'JBSWY3DPEHPK3PXP' | base32 -d | xxd -p -c 256`) and store as `BITGO_TOTP_HEX`. The native `crypto: totp` syscall expects hex.
+3. **Enterprise ID** — visible in the BitGo dashboard URL. Required for any operation scoped to an enterprise.
+
+## Status
+
+**v0.1.0 — production-credible for custodial treasury automation.** All 27 commands validated against the live BitGo test API via `test/live.test.js`, including end-to-end self-send through unlock → tx/initiate → pending approval → wait-for-approval. Mocked unit tests cover the request shape; live tests cover endpoint existence (mocks alone can't catch fictional URLs, which we learned the hard way).
+
+The single biggest known limitation is the production OTP plumbing — the `crypto: totp` + `bitgo: unlock` chain works today on W3 nodes, but workflow authors need to convert their BitGo authenticator's base32 secret to hex when storing it.
+
+## Local development
+
+`scripts/run-local.sh` runs the built `dist/index.js` with `INPUT_*` env vars set from CLI args:
+
+```bash
+export BITGO_ACCESS_TOKEN=v2x_test_...
+export BITGO_API_URL=https://app.bitgo-test.com/api/v2
+
+./scripts/run-local.sh list-wallets --coin hteth
+./scripts/run-local.sh get-balance --coin hteth --wallet-id <id>
 ```
 
-## MCP integration
+For full live integration tests against the real BitGo test API:
 
-When your action is released, add it to the W3 MCP registry so the
-explorer chat and Claude Code can discover it:
+```bash
+BITGO_LIVE_TEST=1 \
+BITGO_ACCESS_TOKEN=... \
+BITGO_API_URL=https://app.bitgo-test.com/api/v2 \
+BITGO_TEST_COIN=hteth \
+BITGO_TEST_WALLET_ID=... \
+BITGO_TEST_OTP=000000 \
+npm run test:live
+```
 
-1. Add your action to `w3-mcp/registry.yaml` under `gha-actions:`
-2. Include all commands with typed input/output schemas
-3. Add a guide to `w3-mcp/content/integrations/`
-4. Run `w3-mcp/scripts/sync-registry.sh` to verify
+Set `BITGO_DEBUG=1` to see full BitGo error response bodies in stderr.
 
-## Examples
+## License
 
-Actions built from this template:
-
-- [w3-chainalysis-action](https://github.com/w3-io/w3-chainalysis-action) — Sanctions screening (single command)
-- [w3-pyth-action](https://github.com/w3-io/w3-pyth-action) — Price oracle (3 commands, no auth)
-- [w3-stripe-action](https://github.com/w3-io/w3-stripe-action) — Payments (41 commands)
-- [w3-email-action](https://github.com/w3-io/w3-email-action) — Multi-provider email
+GPL-3.0

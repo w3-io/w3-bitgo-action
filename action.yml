@@ -1,43 +1,152 @@
-# TODO: Replace this entire file with your action's definition.
-#
-# This file is the contract between your action and the workflow runner.
-# It defines what inputs your action accepts and what outputs it produces.
-# Keep inputs minimal and well-named. See the README for naming conventions.
-#
-# Reference: https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions
-
-name: 'W3 YourPartner Action'          # TODO: e.g. "W3 Cube3 Action"
-description: 'Short description'        # TODO: what does your action do?
+name: 'W3 BitGo Action'
+description: 'BitGo institutional custody operations for W3 workflows — custodial wallet management, sends (TSS + multi-sig), policy approval workflows, transfers, and webhooks.'
 author: 'w3-io'
 
 inputs:
   command:
-    description: 'Operation to perform'  # TODO: list your commands here
+    description: >
+      Operation to perform. Session: unlock. Wallets: list-wallets, get-wallet,
+      create-wallet, share-wallet, freeze-wallet, get-balance, list-addresses,
+      create-address, maximum-spendable, fee-estimate. Sends and tx queries:
+      send-transaction, get-transaction, list-transactions, get-transfer,
+      list-transfers. TSS tx requests: get-tx-request, list-tx-requests.
+      Policy and approval: list-policies, set-policy-rule, remove-policy-rule,
+      list-pending-approvals, get-pending-approval, approve-pending,
+      reject-pending, wait-for-approval. Webhooks: add-webhook, list-webhooks,
+      remove-webhook.
     required: true
-  api-key:
-    description: 'API key for authentication'
-    required: true                       # TODO: set to false if your API needs no auth
-  api-url:
-    description: 'API base URL override (for testing or staging)'
-    required: false
-    default: 'https://api.yourpartner.com'  # TODO: your partner's production API URL
 
-  # TODO: Add your command-specific inputs below. Use plain names without
-  # partner prefix. For example:
-  #
-  # address:
-  #   description: 'Blockchain address to inspect'
-  #   required: false
-  #
-  # symbols:
-  #   description: 'Comma-separated token symbols (e.g. "BTC,ETH")'
-  #   required: false
+  # Authentication
+  access-token:
+    description: 'BitGo access token (sent as Bearer auth)'
+    required: true
+  enterprise-id:
+    description: 'BitGo enterprise ID (required for create/list operations scoped to an enterprise)'
+    required: false
+  api-url:
+    description: 'BitGo API base URL. Default is production; override to https://app.bitgo-test.com/api/v2 for the test environment.'
+    required: false
+    default: 'https://app.bitgo.com/api/v2'
+
+  # Session unlock
+  otp:
+    description: 'One-time password for /user/unlock and approve-pending. Required by BitGo for sensitive operations. Test environment accepts the magic OTP "000000"; production needs a real TOTP from the user authenticator.'
+    required: false
+  duration:
+    description: 'Unlock session duration in seconds (default 600).'
+    required: false
+    default: '600'
+
+  # Common path parameters
+  coin:
+    description: 'Coin ticker (btc, eth, sol, hteth, etc.). BitGo supports the full coin catalog; this value is passed through to the API.'
+    required: false
+  wallet-id:
+    description: 'Wallet ID'
+    required: false
+
+  # Send + transfer inputs
+  address:
+    description: 'Destination address for send-transaction (single-recipient shortcut)'
+    required: false
+  amount:
+    description: 'Amount in base units (satoshis for BTC, wei for ETH, lamports for SOL, etc.) for single-recipient sends'
+    required: false
+  recipients:
+    description: >-
+      JSON array of recipients for batch sends:
+      [{"address": "0x...", "amount": "1000"}, {"address": "0x...", "amount": "2000"}].
+      When provided, takes precedence over address/amount. Works on both TSS and multi-sig
+      wallets, and on both native and token coins (e.g. coin: hteth:tusdc for tokens).
+    required: false
+  comment:
+    description: 'Optional comment to attach to a send. The action embeds the correlation-id automatically.'
+    required: false
+  sequence-id:
+    description: 'Optional client sequence ID for idempotent sends.'
+    required: false
+  tx-id:
+    description: 'Transaction ID for get-transaction'
+    required: false
+  transfer-id:
+    description: 'Transfer ID for get-transfer'
+    required: false
+  tx-request-id:
+    description: 'TSS transaction request ID for get-tx-request'
+    required: false
+  fee-rate:
+    description: 'Fee rate hint for maximum-spendable'
+    required: false
+
+  # Address creation
+  label:
+    description: 'Optional label for create-address'
+    required: false
+  chain:
+    description: 'Optional address chain index for create-address (UTXO coins)'
+    required: false
+
+  # Policy + approval
+  policy-rule-id:
+    description: 'Policy rule ID for remove-policy-rule'
+    required: false
+  pending-approval-id:
+    description: 'Pending approval ID for get-pending-approval / approve-pending / reject-pending / wait-for-approval'
+    required: false
+
+  # wait-for-approval (Layer 2)
+  timeout:
+    description: 'Polling timeout in seconds for wait-for-approval (default 300, max 3600)'
+    required: false
+    default: '300'
+
+  # Layer 3 — webhook auto-registration on send
+  register-webhook-on-pending:
+    description: 'If set to "true" and send-transaction returns a pending approval, automatically register a webhook against the supplied webhook-url so the resolution can fire a follow-up workflow.'
+    required: false
+    default: 'false'
+
+  # Webhooks
+  webhook-url:
+    description: 'Webhook callback URL for add-webhook / register-webhook-on-pending'
+    required: false
+  webhook-id:
+    description: 'Webhook ID for remove-webhook'
+    required: false
+  webhook-type:
+    description: 'Webhook event type (transfer, pendingApproval, address_confirmation). Default: pendingApproval'
+    required: false
+    default: 'pendingApproval'
+
+  # Sharing
+  share-with-user:
+    description: 'BitGo user ID to share a wallet with (share-wallet)'
+    required: false
+  share-permissions:
+    description: 'Comma-separated permissions for share-wallet (view, spend, admin)'
+    required: false
+
+  # Pagination
+  limit:
+    description: 'Result limit for list operations'
+    required: false
+  prev-id:
+    description: 'Pagination cursor for list operations'
+    required: false
+
+  # Escape hatch for rich nested input (set-policy-rule, create-wallet, freeze-wallet)
+  body:
+    description: 'JSON body for commands that need rich input (policy rules, create-wallet config). Parsed and forwarded.'
+    required: false
+
+  # Optional correlation ID — pass-through if you want a specific ID, otherwise the action generates a UUID
+  correlation-id:
+    description: 'Optional correlation ID embedded in the BitGo comment field so a future webhook can match the approval back to the workflow that initiated it. If omitted, the action generates one.'
+    required: false
 
 outputs:
   result:
-    description: 'JSON result of the operation'
-    # This is the only output. Always a JSON string.
-    # Document the schema in your w3-action.yaml and docs/guide.md.
+    description: 'JSON result of the operation. Schema documented per command in docs/guide.md.'
 
 runs:
   using: 'node20'
