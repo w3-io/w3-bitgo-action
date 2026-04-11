@@ -11,16 +11,16 @@ npm install @w3-io/action-core
 
 ### What it provides (use these, don't reinvent them)
 
-| Import | Purpose |
-|--------|---------|
-| `createCommandRouter` | Dispatches on the `command` input. Handles unknown commands. |
-| `setJsonOutput` | Sets output, serializes exactly once. Prevents double-encoding. |
-| `handleError` | Structured error with code. Use as `.catch(handleError)`. |
-| `request` | HTTP with timeout, retry on 429/5xx, auth helpers. |
-| `bridge` | Syscall bridge client for chain and crypto operations. |
-| `requireInput` | Throws clear error if input missing. |
-| `parseJsonInput` | Parses JSON input with error handling. |
-| `W3ActionError` | Error class with code and statusCode. |
+| Import                | Purpose                                                         |
+| --------------------- | --------------------------------------------------------------- |
+| `createCommandRouter` | Dispatches on the `command` input. Handles unknown commands.    |
+| `setJsonOutput`       | Sets output, serializes exactly once. Prevents double-encoding. |
+| `handleError`         | Structured error with code. Use as `.catch(handleError)`.       |
+| `request`             | HTTP with timeout, retry on 429/5xx, auth helpers.              |
+| `bridge`              | Syscall bridge client for chain and crypto operations.          |
+| `requireInput`        | Throws clear error if input missing.                            |
+| `parseJsonInput`      | Parses JSON input with error handling.                          |
+| `W3ActionError`       | Error class with code and statusCode.                           |
 
 ### Entry point pattern
 
@@ -49,18 +49,28 @@ web3.js, @solana/web3.js, or any other blockchain SDK.
 import { bridge } from '@w3-io/action-core'
 
 // Read a contract
-const result = await bridge.chain('ethereum', 'read-contract', {
-  contractAddress: '0x...',
-  functionSignature: 'function balanceOf(address) returns (uint256)',
-  args: JSON.stringify(['0x...']),
-}, 'base')
+const result = await bridge.chain(
+  'ethereum',
+  'read-contract',
+  {
+    contractAddress: '0x...',
+    functionSignature: 'function balanceOf(address) returns (uint256)',
+    args: JSON.stringify(['0x...']),
+  },
+  'base',
+)
 
 // Write to a contract (bridge handles signing)
-const tx = await bridge.chain('ethereum', 'call-contract', {
-  contractAddress: '0x...',
-  functionSignature: 'function deposit(string poId, uint256 amount)',
-  args: JSON.stringify(['PO-001', '1000000']),
-}, 'base')
+const tx = await bridge.chain(
+  'ethereum',
+  'call-contract',
+  {
+    contractAddress: '0x...',
+    functionSignature: 'function deposit(string poId, uint256 amount)',
+    args: JSON.stringify(['PO-001', '1000000']),
+  },
+  'base',
+)
 
 // Crypto operations
 const hash = await bridge.crypto('keccak256', { data: '0xdeadbeef' })
@@ -71,12 +81,14 @@ keys that never enter the container. Bundling ethers adds 300KB+ to your
 action and requires private keys as inputs — a security risk.
 
 **Available bridge operations:**
+
 - Ethereum: read-contract, call-contract, send-transaction, get-balance, transfer, approve-token, transfer-token, get-token-balance, get-events, deploy-contract, and more
 - Bitcoin: get-balance, send, get-utxos, get-fee-rate
 - Solana: get-balance, transfer, call-program, get-token-balance
 - Crypto: keccak256, aes-encrypt/decrypt, ed25519-sign/verify, hkdf, jwt-sign/verify, totp
 
 **Bridge param names** (these must be exact):
+
 - `contractAddress` not `contract` or `to`
 - `functionSignature` not `method` or `abi`
 - `args` as JSON string: `JSON.stringify(['arg1', 'arg2'])`
@@ -84,6 +96,7 @@ action and requires private keys as inputs — a security risk.
 ## Do NOT use WASM
 
 If your action needs crypto or encoding operations, use:
+
 - The bridge for crypto: `bridge.crypto('keccak256', ...)`
 - Node built-ins for encoding: `Buffer.from()`, `node:crypto`
 
@@ -187,12 +200,17 @@ Every action follows this structure:
 
 ```markdown
 # W3 YourPartner Action
+
 One-line description.
 
 ## Quick Start
+
 ## Commands (table)
+
 ## Inputs (table)
+
 ## Outputs (table)
+
 ## Authentication
 ```
 
@@ -203,6 +221,7 @@ Every action needs docs in two places:
 ### 1. `docs/guide.md` in the action repo (deep)
 
 The complete reference. Everything a developer needs:
+
 - What the partner/service does and why you'd use it
 - Every command with inputs, outputs, and example YAML
 - Authentication setup
@@ -214,6 +233,7 @@ This is the source of truth. Keep it up to date when commands change.
 ### 2. MCP integration guide (short)
 
 A brief orientation in `w3-mcp/content/integrations/yourpartner.md`:
+
 - One paragraph: what it does, when to use it
 - One quick-start YAML example
 - Link to the full guide in the action repo
