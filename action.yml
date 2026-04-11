@@ -149,5 +149,5 @@ outputs:
     description: 'JSON result of the operation. Schema documented per command in docs/guide.md.'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
