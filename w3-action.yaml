@@ -1,0 +1,44 @@
+# TODO: This file describes your action for the W3 MCP server.
+# AI agents use this to discover your action, understand its commands,
+# and generate correct workflow YAML. Keep it in sync with action.yml.
+#
+# On release, this file is synced to the MCP's registry.yaml.
+
+kind: integration              # integration | primitive | utility
+partner: yourpartner           # TODO: machine-readable partner ID
+name: YourPartner Integration  # TODO: human-readable name
+version: 1.0.0
+repo: w3-io/w3-yourpartner-action  # TODO: your repo
+
+commands:
+  # TODO: Define each command your action supports. Example:
+  #
+  # - name: inspect
+  #   description: >
+  #     Risk assessment for a blockchain address. Returns per-chain
+  #     scores for fraud, compliance, and cyber risk.
+  #   inputs:
+  #     address:
+  #       type: string
+  #       required: true
+  #       description: Blockchain address to inspect
+  #     chain-id:
+  #       type: string
+  #       required: false
+  #       description: Filter to a specific chain
+  #   outputs:
+  #     result:
+  #       type: object
+  #       description: Full risk score breakdown
+
+  - name: example-command
+    description: TODO - describe what this command does
+    inputs:
+      input:
+        type: string
+        required: true
+        description: TODO - describe this input
+    outputs:
+      result:
+        type: object
+        description: TODO - describe the output shape

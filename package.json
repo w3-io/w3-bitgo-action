@@ -1,0 +1,23 @@
+{
+  "name": "w3-yourpartner-action",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TODO: Your action description",
+  "type": "module",
+  "scripts": {
+    "build": "ncc build src/index.js -o dist",
+    "format": "prettier --write .",
+    "lint": "eslint src/",
+    "test": "node --test test/*.test.js",
+    "all": "npm run format && npm run lint && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@w3-io/action-core": "^0.3.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0"
+  }
+}
