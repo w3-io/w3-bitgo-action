@@ -216,6 +216,113 @@ const handlers = {
     )
     setJsonOutput('result', result)
   },
+
+  // ── Tier 3: Policy and approval ───────────────────────────────
+
+  'list-policies': async () => {
+    const client = getClient()
+    const result = await client.listPolicies(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'set-policy-rule': async () => {
+    const client = getClient()
+    const body = parseJsonInput('body')
+    const result = await client.setPolicyRule(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      body,
+    )
+    setJsonOutput('result', result)
+  },
+
+  'remove-policy-rule': async () => {
+    const client = getClient()
+    const result = await client.removePolicyRule(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      core.getInput('policy-rule-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-pending-approvals': async () => {
+    const client = getClient()
+    const result = await client.listPendingApprovals({
+      walletId: core.getInput('wallet-id') || undefined,
+      enterpriseId: core.getInput('enterprise-id') || undefined,
+    })
+    setJsonOutput('result', result)
+  },
+
+  'approve-pending': async () => {
+    const client = getClient()
+    const result = await client.approvePending(
+      core.getInput('pending-approval-id', { required: true }),
+      {
+        walletPassphrase: core.getInput('wallet-passphrase') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'reject-pending': async () => {
+    const client = getClient()
+    const result = await client.rejectPending(
+      core.getInput('pending-approval-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  // ── Layer 2: Synchronous wait-for-approval ────────────────────
+
+  'wait-for-approval': async () => {
+    const client = getClient()
+    const result = await client.waitForApproval(
+      core.getInput('pending-approval-id', { required: true }),
+      {
+        timeout: Number(core.getInput('timeout')) || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  // ── Tier 4: Webhook registration ──────────────────────────────
+
+  'add-webhook': async () => {
+    const client = getClient()
+    const result = await client.addWebhook(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        url: core.getInput('webhook-url', { required: true }),
+        type: core.getInput('webhook-type') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-webhooks': async () => {
+    const client = getClient()
+    const result = await client.listWebhooks(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'remove-webhook': async () => {
+    const client = getClient()
+    const result = await client.removeWebhook(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      core.getInput('webhook-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
 }
 
 const router = createCommandRouter(handlers)

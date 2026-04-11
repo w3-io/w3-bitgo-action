@@ -27917,6 +27917,8 @@ function createMockCore() {
 
 // EXTERNAL MODULE: external "node:crypto"
 var external_node_crypto_ = __nccwpck_require__(7598);
+;// CONCATENATED MODULE: external "node:timers/promises"
+const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:timers/promises");
 ;// CONCATENATED MODULE: ./src/bitgo.js
 /**
  * BitGo API client.
@@ -27936,6 +27938,7 @@ var external_node_crypto_ = __nccwpck_require__(7598);
  * extra HTTP round-trip (~50ms) per send; the benefit is the
  * caller never needs to know which model their wallet uses.
  */
+
 
 
 
@@ -28491,12 +28494,162 @@ class BitGoClient {
     }
   }
 
+  // ── Tier 3: Policy and approval ──────────────────────────────────
+
   /**
-   * Stub for Tier 4. The full implementation lands in the next
-   * commit; sendTransaction's auto-register-on-pending hook calls
-   * this method directly via `this.addWebhook(...)` so the wiring
-   * is in place from day one. Wired here so the type-checker
-   * (and tests) can exercise the call site.
+   * List policy rules attached to a wallet.
+   *
+   * BitGo returns the policy as part of the wallet object, so this
+   * is a thin convenience over getWallet that surfaces just the
+   * policy document for callers who only care about the rules.
+   */
+  async listPolicies(coin, walletId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    const wallet = await this.getWallet(coin, walletId)
+    return {
+      coin,
+      walletId,
+      version: wallet?.admin?.policy?.version ?? null,
+      latest: wallet?.admin?.policy?.latest ?? null,
+      rules: wallet?.admin?.policy?.rules ?? [],
+    }
+  }
+
+  /**
+   * Add or update a policy rule (spending limit, velocity,
+   * allowlist, etc.). The full rule definition is passed via the
+   * body input — BitGo's policy schema is rich and per-rule-type,
+   * so we don't try to model it in TypeScript-style helpers.
+   */
+  async setPolicyRule(coin, walletId, body) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    if (!body || typeof body !== 'object') {
+      throw new BitGoError(
+        'MISSING_BODY',
+        'set-policy-rule requires a JSON body with the policy rule definition',
+      )
+    }
+    return this._request(`/${coin}/wallet/${walletId}/policy/rule`, {
+      method: 'PUT',
+      body,
+    })
+  }
+
+  /**
+   * Remove a policy rule by ID.
+   */
+  async removePolicyRule(coin, walletId, ruleId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('policy-rule-id', ruleId)
+    return this._request(`/${coin}/wallet/${walletId}/policy/rule`, {
+      method: 'DELETE',
+      body: { id: ruleId },
+    })
+  }
+
+  /**
+   * List pending approvals scoped to a wallet, an enterprise, or
+   * (if neither is supplied) the constructor's default enterprise.
+   */
+  async listPendingApprovals({ walletId, enterpriseId } = {}) {
+    return this._request(`/pendingapprovals`, {
+      query: {
+        walletId,
+        enterprise: enterpriseId || this.enterpriseId,
+      },
+    })
+  }
+
+  /**
+   * Approve a pending approval. If the approval is for a
+   * tx-signing operation, BitGo also needs the wallet passphrase
+   * to actually sign the transaction. Reads-only approvals
+   * (e.g. policy changes) don't need the passphrase.
+   */
+  async approvePending(pendingApprovalId, { walletPassphrase } = {}) {
+    requireParam('pending-approval-id', pendingApprovalId)
+    const body = { state: 'approved' }
+    const passphrase = walletPassphrase || this.walletPassphrase
+    if (passphrase) body.walletPassphrase = passphrase
+    return this._request(`/pendingapprovals/${pendingApprovalId}`, {
+      method: 'PUT',
+      body,
+    })
+  }
+
+  /**
+   * Reject a pending approval.
+   */
+  async rejectPending(pendingApprovalId) {
+    requireParam('pending-approval-id', pendingApprovalId)
+    return this._request(`/pendingapprovals/${pendingApprovalId}`, {
+      method: 'PUT',
+      body: { state: 'rejected' },
+    })
+  }
+
+  // ── Layer 2: Synchronous wait-for-approval ───────────────────────
+
+  /**
+   * Block until a pending approval transitions to a terminal state
+   * (approved or rejected) or until the timeout elapses.
+   *
+   * Polling cadence: starts at 5s, exponentially backs off (×1.5)
+   * to a 30s ceiling. The first poll happens immediately so
+   * already-resolved approvals return on the first call.
+   *
+   * Returns:
+   *   - { status: "approved",  raw, txHash? } when state === "approved"
+   *   - { status: "rejected",  raw }          when state === "rejected"
+   *   - { status: "timeout",   raw }          when timeout exceeded
+   *
+   * The txHash is extracted only if the underlying approval was a
+   * tx-signing operation that has a transactions[0] entry once
+   * approved.
+   */
+  async waitForApproval(pendingApprovalId, { timeout = 300, sleep = defaultSleep } = {}) {
+    requireParam('pending-approval-id', pendingApprovalId)
+
+    const maxTimeout = 3600
+    const effectiveTimeout = Math.min(Math.max(Number(timeout) || 0, 1), maxTimeout)
+    const deadline = Date.now() + effectiveTimeout * 1000
+
+    let interval = 5000
+    const maxInterval = 30000
+
+    let lastBody = null
+    while (Date.now() < deadline) {
+      const approval = await this._request(`/pendingapprovals/${pendingApprovalId}`)
+      lastBody = approval
+      if (approval?.state === 'approved') {
+        return {
+          status: 'approved',
+          pendingApprovalId,
+          txHash: extractApprovalTxHash(approval),
+          raw: approval,
+        }
+      }
+      if (approval?.state === 'rejected') {
+        return { status: 'rejected', pendingApprovalId, raw: approval }
+      }
+      // Sleep, but never beyond the deadline.
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) break
+      await sleep(Math.min(interval, remaining))
+      interval = Math.min(interval * 1.5, maxInterval)
+    }
+
+    return { status: 'timeout', pendingApprovalId, raw: lastBody }
+  }
+
+  // ── Tier 4: Webhook registration ─────────────────────────────────
+
+  /**
+   * Register a webhook against a wallet for transfer or
+   * pendingApproval events. Sent as POST /:coin/wallet/:id/webhooks.
    */
   async addWebhook(coin, walletId, { url, type = 'pendingApproval' } = {}) {
     requireParam('coin', coin)
@@ -28507,6 +28660,44 @@ class BitGoClient {
       body: { url, type },
     })
   }
+
+  async listWebhooks(coin, walletId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    return this._request(`/${coin}/wallet/${walletId}/webhooks`)
+  }
+
+  async removeWebhook(coin, walletId, webhookId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('webhook-id', webhookId)
+    return this._request(`/${coin}/wallet/${walletId}/webhooks/${webhookId}`, {
+      method: 'DELETE',
+    })
+  }
+}
+
+/**
+ * Default sleep used by waitForApproval. Tests inject a fake sleep
+ * to avoid waiting in real time.
+ */
+function defaultSleep(ms) {
+  return (0,promises_namespaceObject.setTimeout)(ms)
+}
+
+/**
+ * Extract a tx hash from a resolved approval, if present. BitGo's
+ * approval payload nests the transactions under different paths
+ * depending on the approval type — cover the common shapes.
+ */
+function extractApprovalTxHash(approval) {
+  return (
+    approval?.transactions?.[0]?.txid ||
+    approval?.transactions?.[0]?.txHash ||
+    approval?.txid ||
+    approval?.txHash ||
+    null
+  )
 }
 
 /**
@@ -28746,6 +28937,113 @@ const handlers = {
         address: lib_core.getInput('address', { required: true }),
         walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
       },
+    )
+    setJsonOutput('result', result)
+  },
+
+  // ── Tier 3: Policy and approval ───────────────────────────────
+
+  'list-policies': async () => {
+    const client = getClient()
+    const result = await client.listPolicies(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'set-policy-rule': async () => {
+    const client = getClient()
+    const body = parseJsonInput('body')
+    const result = await client.setPolicyRule(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      body,
+    )
+    setJsonOutput('result', result)
+  },
+
+  'remove-policy-rule': async () => {
+    const client = getClient()
+    const result = await client.removePolicyRule(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      lib_core.getInput('policy-rule-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-pending-approvals': async () => {
+    const client = getClient()
+    const result = await client.listPendingApprovals({
+      walletId: lib_core.getInput('wallet-id') || undefined,
+      enterpriseId: lib_core.getInput('enterprise-id') || undefined,
+    })
+    setJsonOutput('result', result)
+  },
+
+  'approve-pending': async () => {
+    const client = getClient()
+    const result = await client.approvePending(
+      lib_core.getInput('pending-approval-id', { required: true }),
+      {
+        walletPassphrase: lib_core.getInput('wallet-passphrase') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'reject-pending': async () => {
+    const client = getClient()
+    const result = await client.rejectPending(
+      lib_core.getInput('pending-approval-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  // ── Layer 2: Synchronous wait-for-approval ────────────────────
+
+  'wait-for-approval': async () => {
+    const client = getClient()
+    const result = await client.waitForApproval(
+      lib_core.getInput('pending-approval-id', { required: true }),
+      {
+        timeout: Number(lib_core.getInput('timeout')) || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  // ── Tier 4: Webhook registration ──────────────────────────────
+
+  'add-webhook': async () => {
+    const client = getClient()
+    const result = await client.addWebhook(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
+        url: lib_core.getInput('webhook-url', { required: true }),
+        type: lib_core.getInput('webhook-type') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-webhooks': async () => {
+    const client = getClient()
+    const result = await client.listWebhooks(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'remove-webhook': async () => {
+    const client = getClient()
+    const result = await client.removeWebhook(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      lib_core.getInput('webhook-id', { required: true }),
     )
     setJsonOutput('result', result)
   },
