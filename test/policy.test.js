@@ -180,33 +180,23 @@ describe('listPendingApprovals', () => {
 })
 
 describe('approvePending', () => {
-  it('PUTs state=approved with the wallet passphrase', async () => {
+  it('PUTs state=approved with the otp', async () => {
     mockFetch([{ body: { id: 'pa1', state: 'approved' } }])
-    const client = newClient({ walletPassphrase: 'secret' })
-    const result = await client.approvePending('pa1')
+    const result = await newClient().approvePending('pa1', { otp: '000000' })
     assert.equal(calls[0].url, `${API_URL}/pendingapprovals/pa1`)
     assert.equal(calls[0].options.method, 'PUT')
     const body = JSON.parse(calls[0].options.body)
     assert.equal(body.state, 'approved')
-    assert.equal(body.walletPassphrase, 'secret')
+    assert.equal(body.otp, '000000')
     assert.equal(result.state, 'approved')
   })
 
-  it('omits the passphrase when none is provided', async () => {
+  it('omits the otp when none is provided', async () => {
     mockFetch([{ body: { id: 'pa1', state: 'approved' } }])
-    const client = newClient()
-    await client.approvePending('pa1')
+    await newClient().approvePending('pa1')
     const body = JSON.parse(calls[0].options.body)
     assert.equal(body.state, 'approved')
-    assert.equal(body.walletPassphrase, undefined)
-  })
-
-  it('lets per-call passphrase override the constructor default', async () => {
-    mockFetch([{ body: { id: 'pa1', state: 'approved' } }])
-    const client = newClient({ walletPassphrase: 'default-secret' })
-    await client.approvePending('pa1', { walletPassphrase: 'override-secret' })
-    const body = JSON.parse(calls[0].options.body)
-    assert.equal(body.walletPassphrase, 'override-secret')
+    assert.equal(body.otp, undefined)
   })
 
   it('requires the pending approval id', async () => {

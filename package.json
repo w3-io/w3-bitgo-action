@@ -9,7 +9,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint src/",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/bitgo.test.js test/policy.test.js test/send.test.js",
+    "test:live": "BITGO_LIVE_TEST=1 node --test test/live.test.js",
     "all": "npm run format && npm run lint && npm run test && npm run build"
   },
   "dependencies": {

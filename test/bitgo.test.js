@@ -119,20 +119,26 @@ describe('BitGoClient: getWallet + caching', () => {
 })
 
 describe('BitGoClient: detectWalletType', () => {
-  it('returns multisigType from the wallet metadata', async () => {
-    mockFetch([{ body: { id: 'w1', multisigType: 'tss' } }])
+  it('returns { type, multisigType } from the wallet metadata', async () => {
+    mockFetch([{ body: { id: 'w1', type: 'custodial', multisigType: 'tss' } }])
     const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })
-    assert.equal(await client.detectWalletType('btc', 'w1'), 'tss')
+    assert.deepEqual(await client.detectWalletType('btc', 'w1'), {
+      type: 'custodial',
+      multisigType: 'tss',
+    })
   })
 
-  it('falls back to "onchain" when multisigType is missing', async () => {
+  it('falls back to custodial+onchain when fields are missing', async () => {
     mockFetch([{ body: { id: 'w1' } }])
     const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })
-    assert.equal(await client.detectWalletType('btc', 'w1'), 'onchain')
+    assert.deepEqual(await client.detectWalletType('btc', 'w1'), {
+      type: 'custodial',
+      multisigType: 'onchain',
+    })
   })
 
   it('reuses the wallet cache (no extra fetch)', async () => {
-    mockFetch([{ body: { id: 'w1', multisigType: 'tss' } }])
+    mockFetch([{ body: { id: 'w1', type: 'custodial', multisigType: 'tss' } }])
     const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })
 
     await client.getWallet('btc', 'w1')

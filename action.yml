@@ -1,17 +1,19 @@
 name: 'W3 BitGo Action'
-description: 'BitGo institutional custody and signing — wallet management, TSS + multi-sig transactions, policy approval workflows, and webhook registration for W3 workflows.'
+description: 'BitGo institutional custody operations for W3 workflows — custodial wallet management, sends (TSS + multi-sig), policy approval workflows, transfers, and webhooks.'
 author: 'w3-io'
 
 inputs:
   command:
     description: >
-      Operation to perform. Wallets: list-wallets, get-wallet, create-wallet,
-      share-wallet, freeze-wallet, get-balance, list-addresses. Transactions:
-      build-transaction, send-transaction, send-many, accelerate-transaction,
-      get-transaction, list-transactions, consolidate, sweep. Policy and
-      approval: list-policies, set-policy-rule, remove-policy-rule,
-      list-pending-approvals, approve-pending, reject-pending,
-      wait-for-approval. Webhooks: add-webhook, list-webhooks, remove-webhook.
+      Operation to perform. Session: unlock. Wallets: list-wallets, get-wallet,
+      create-wallet, share-wallet, freeze-wallet, get-balance, list-addresses,
+      create-address, maximum-spendable, fee-estimate. Sends and tx queries:
+      send-transaction, get-transaction, list-transactions, get-transfer,
+      list-transfers. TSS tx requests: get-tx-request, list-tx-requests.
+      Policy and approval: list-policies, set-policy-rule, remove-policy-rule,
+      list-pending-approvals, get-pending-approval, approve-pending,
+      reject-pending, wait-for-approval. Webhooks: add-webhook, list-webhooks,
+      remove-webhook.
     required: true
 
   # Authentication
@@ -21,37 +23,60 @@ inputs:
   enterprise-id:
     description: 'BitGo enterprise ID (required for create/list operations scoped to an enterprise)'
     required: false
-  wallet-passphrase:
-    description: 'Wallet passphrase used to decrypt the user keychain for signing operations. Required only for tx-signing commands.'
-    required: false
   api-url:
     description: 'BitGo API base URL. Default is production; override to https://app.bitgo-test.com/api/v2 for the test environment.'
     required: false
     default: 'https://app.bitgo.com/api/v2'
 
+  # Session unlock
+  otp:
+    description: 'One-time password for /user/unlock and approve-pending. Required by BitGo for sensitive operations. Test environment accepts the magic OTP "000000"; production needs a real TOTP from the user authenticator.'
+    required: false
+  duration:
+    description: 'Unlock session duration in seconds (default 600).'
+    required: false
+    default: '600'
+
   # Common path parameters
   coin:
-    description: 'Coin ticker (btc, eth, sol, ltc, etc.). BitGo supports the full coin catalog; this value is passed through to the API.'
+    description: 'Coin ticker (btc, eth, sol, hteth, etc.). BitGo supports the full coin catalog; this value is passed through to the API.'
     required: false
   wallet-id:
     description: 'Wallet ID'
     required: false
 
-  # Transaction inputs
+  # Send + transfer inputs
   address:
-    description: 'Destination address for send/sweep'
+    description: 'Destination address for send-transaction'
     required: false
   amount:
     description: 'Amount in base units (satoshis for BTC, wei for ETH, lamports for SOL, etc.)'
     required: false
+  comment:
+    description: 'Optional comment to attach to a send. The action embeds the correlation-id automatically.'
+    required: false
+  sequence-id:
+    description: 'Optional client sequence ID for idempotent sends.'
+    required: false
   tx-id:
-    description: 'Transaction ID for get-transaction / accelerate-transaction'
+    description: 'Transaction ID for get-transaction'
+    required: false
+  transfer-id:
+    description: 'Transfer ID for get-transfer'
+    required: false
+  tx-request-id:
+    description: 'TSS transaction request ID for get-tx-request'
     required: false
   fee-rate:
-    description: 'Fee rate for build-transaction / accelerate-transaction (sat/vB or gwei)'
+    description: 'Fee rate hint for maximum-spendable'
     required: false
-  comment:
-    description: 'Optional comment to attach to a transaction'
+
+  # Address creation
+  label:
+    description: 'Optional label for create-address'
+    required: false
+  chain:
+    description: 'Optional address chain index for create-address (UTXO coins)'
     required: false
 
   # Policy + approval
@@ -59,10 +84,7 @@ inputs:
     description: 'Policy rule ID for remove-policy-rule'
     required: false
   pending-approval-id:
-    description: 'Pending approval ID for approve-pending / reject-pending / wait-for-approval'
-    required: false
-  approval-state:
-    description: 'Target state for approve-pending / reject-pending (approved | rejected). Defaults match the command.'
+    description: 'Pending approval ID for get-pending-approval / approve-pending / reject-pending / wait-for-approval'
     required: false
 
   # wait-for-approval (Layer 2)
@@ -105,14 +127,14 @@ inputs:
     description: 'Pagination cursor for list operations'
     required: false
 
-  # Escape hatch for rich nested input (set-policy-rule, send-many, create-wallet)
+  # Escape hatch for rich nested input (set-policy-rule, create-wallet, freeze-wallet)
   body:
-    description: 'JSON body for commands that need rich input (policy rules, send-many recipients, create-wallet config). Parsed and forwarded.'
+    description: 'JSON body for commands that need rich input (policy rules, create-wallet config). Parsed and forwarded.'
     required: false
 
   # Optional correlation ID — pass-through if you want a specific ID, otherwise the action generates a UUID
   correlation-id:
-    description: 'Optional correlation ID embedded in BitGo metadata so a future webhook can match the approval back to the workflow that initiated it. If omitted, the action generates one.'
+    description: 'Optional correlation ID embedded in the BitGo comment field so a future webhook can match the approval back to the workflow that initiated it. If omitted, the action generates one.'
     required: false
 
 outputs:

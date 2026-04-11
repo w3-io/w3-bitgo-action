@@ -5,28 +5,36 @@ import { BitGoClient, BitGoError } from './bitgo.js'
 /**
  * W3 BitGo Action — command dispatch.
  *
- * Each command handler is an async function that:
- *   1. Reads inputs via @actions/core
- *   2. Calls a method on BitGoClient
- *   3. Sets the JSON output via setJsonOutput
+ * Custodial-wallet-only signing. Each handler reads inputs via
+ * @actions/core, calls a method on BitGoClient, and writes the
+ * result to the `result` output as JSON.
  *
- * The createCommandRouter from @w3-io/action-core handles dispatch
- * by command name and reports unknown commands with the available list.
- *
- * Tier 2 (transactions/signing), Tier 3 (policy/approval), Layer 2
- * (wait-for-approval), and Tier 4 (webhooks) land in subsequent commits.
+ * The send commands return a pending-approval result by default;
+ * use wait-for-approval to block until terminal state, or set
+ * register-webhook-on-pending=true with webhook-url to fire a
+ * follow-up workflow on resolution.
  */
 
 function getClient() {
   return new BitGoClient({
     accessToken: core.getInput('access-token', { required: true }),
     enterpriseId: core.getInput('enterprise-id') || undefined,
-    walletPassphrase: core.getInput('wallet-passphrase') || undefined,
     apiUrl: core.getInput('api-url') || undefined,
   })
 }
 
 const handlers = {
+  // ── Session ───────────────────────────────────────────────────
+
+  unlock: async () => {
+    const client = getClient()
+    const result = await client.unlock({
+      otp: core.getInput('otp', { required: true }),
+      duration: Number(core.getInput('duration')) || undefined,
+    })
+    setJsonOutput('result', result)
+  },
+
   // ── Tier 1: Wallet management ─────────────────────────────────
 
   'list-wallets': async () => {
@@ -72,11 +80,10 @@ const handlers = {
 
   'freeze-wallet': async () => {
     const client = getClient()
-    const body = core.getInput('body') ? parseJsonInput('body') : {}
     const result = await client.freezeWallet(
       core.getInput('coin', { required: true }),
       core.getInput('wallet-id', { required: true }),
-      body,
+      parseJsonInput('body') || {},
     )
     setJsonOutput('result', result)
   },
@@ -103,65 +110,52 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
-  // ── Tier 2: Transactions and signing ──────────────────────────
-
-  'build-transaction': async () => {
+  'create-address': async () => {
     const client = getClient()
-    const result = await client.buildTransaction(
+    const result = await client.createAddress(
       core.getInput('coin', { required: true }),
       core.getInput('wallet-id', { required: true }),
       {
-        address: core.getInput('address', { required: true }),
-        amount: core.getInput('amount', { required: true }),
+        label: core.getInput('label') || undefined,
+        chain: core.getInput('chain') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'maximum-spendable': async () => {
+    const client = getClient()
+    const result = await client.maximumSpendable(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
         feeRate: core.getInput('fee-rate') || undefined,
       },
     )
     setJsonOutput('result', result)
   },
+
+  'fee-estimate': async () => {
+    const client = getClient()
+    const result = await client.feeEstimate(core.getInput('coin', { required: true }))
+    setJsonOutput('result', result)
+  },
+
+  // ── Tier 2: Sends and tx queries ──────────────────────────────
 
   'send-transaction': async () => {
     const client = getClient()
-    const result = await client.sendTransaction(
+    const result = await client.send(
       core.getInput('coin', { required: true }),
       core.getInput('wallet-id', { required: true }),
       {
         address: core.getInput('address', { required: true }),
         amount: core.getInput('amount', { required: true }),
-        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
-        feeRate: core.getInput('fee-rate') || undefined,
         comment: core.getInput('comment') || undefined,
+        sequenceId: core.getInput('sequence-id') || undefined,
         correlationId: core.getInput('correlation-id') || undefined,
-        registerWebhookOnPending: core.getInput('register-webhook-on-pending') === 'true',
+        registerWebhookOnPending: core.getBooleanInput('register-webhook-on-pending') || undefined,
         webhookUrl: core.getInput('webhook-url') || undefined,
-      },
-    )
-    setJsonOutput('result', result)
-  },
-
-  'send-many': async () => {
-    const client = getClient()
-    const body = parseJsonInput('body')
-    const result = await client.sendMany(
-      core.getInput('coin', { required: true }),
-      core.getInput('wallet-id', { required: true }),
-      {
-        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
-        body,
-        correlationId: core.getInput('correlation-id') || undefined,
-      },
-    )
-    setJsonOutput('result', result)
-  },
-
-  'accelerate-transaction': async () => {
-    const client = getClient()
-    const result = await client.accelerateTransaction(
-      core.getInput('coin', { required: true }),
-      core.getInput('wallet-id', { required: true }),
-      core.getInput('tx-id', { required: true }),
-      {
-        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
-        feeRate: core.getInput('fee-rate') || undefined,
       },
     )
     setJsonOutput('result', result)
@@ -190,30 +184,43 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
-  consolidate: async () => {
+  'get-transfer': async () => {
     const client = getClient()
-    const body = core.getInput('body') ? parseJsonInput('body') : undefined
-    const result = await client.consolidate(
+    const result = await client.getTransfer(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      core.getInput('transfer-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-transfers': async () => {
+    const client = getClient()
+    const result = await client.listTransfers(
       core.getInput('coin', { required: true }),
       core.getInput('wallet-id', { required: true }),
       {
-        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
-        body,
+        limit: core.getInput('limit') || undefined,
+        prevId: core.getInput('prev-id') || undefined,
       },
     )
     setJsonOutput('result', result)
   },
 
-  sweep: async () => {
+  // ── TSS-specific tx requests ──────────────────────────────────
+
+  'get-tx-request': async () => {
     const client = getClient()
-    const result = await client.sweep(
-      core.getInput('coin', { required: true }),
+    const result = await client.getTxRequest(
       core.getInput('wallet-id', { required: true }),
-      {
-        address: core.getInput('address', { required: true }),
-        walletPassphrase: core.getInput('wallet-passphrase', { required: true }),
-      },
+      core.getInput('tx-request-id', { required: true }),
     )
+    setJsonOutput('result', result)
+  },
+
+  'list-tx-requests': async () => {
+    const client = getClient()
+    const result = await client.listTxRequests(core.getInput('wallet-id', { required: true }))
     setJsonOutput('result', result)
   },
 
@@ -258,12 +265,20 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
+  'get-pending-approval': async () => {
+    const client = getClient()
+    const result = await client.getPendingApproval(
+      core.getInput('pending-approval-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
   'approve-pending': async () => {
     const client = getClient()
     const result = await client.approvePending(
       core.getInput('pending-approval-id', { required: true }),
       {
-        walletPassphrase: core.getInput('wallet-passphrase') || undefined,
+        otp: core.getInput('otp') || undefined,
       },
     )
     setJsonOutput('result', result)
@@ -333,6 +348,14 @@ export async function run() {
   } catch (error) {
     if (error instanceof BitGoError) {
       core.setFailed(`BitGo error (${error.code}): ${error.message}`)
+      // Surface the API response body so callers can debug. Gated
+      // to debug for CI runs and BITGO_DEBUG=1 for local dev.
+      if (error.details) {
+        core.debug(`BitGo error details: ${JSON.stringify(error.details)}`)
+        if (process.env.BITGO_DEBUG === '1') {
+          process.stderr.write(`BitGo error details: ${JSON.stringify(error.details, null, 2)}\n`)
+        }
+      }
     } else {
       handleError(error)
     }

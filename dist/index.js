@@ -27921,22 +27921,56 @@ var external_node_crypto_ = __nccwpck_require__(7598);
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:timers/promises");
 ;// CONCATENATED MODULE: ./src/bitgo.js
 /**
- * BitGo API client.
+ * BitGo Platform API client (custodial wallets only).
  *
  * Wraps the BitGo Platform REST API at https://app.bitgo.com/api/v2
  * (or https://app.bitgo-test.com/api/v2 for the test environment).
  *
- * Auth model: long-lived access token sent as `Authorization: Bearer ...`.
- * Wallet signing operations additionally require a `walletPassphrase`
- * to decrypt the user keychain — this is the BitGo-specific gotcha.
+ * ## Why custodial-only
  *
- * Wallet type detection: BitGo wallets are either TSS (MPC) or
- * on-chain multi-sig. The two have slightly different signing
- * request shapes. Rather than asking the caller, we query
- * `/:coin/wallet/:id` once at the start of any signing operation
- * and dispatch on the returned `multisigType`. The cost is one
- * extra HTTP round-trip (~50ms) per send; the benefit is the
- * caller never needs to know which model their wallet uses.
+ * The legacy "build + sign + broadcast" endpoints (`/sendcoins`,
+ * `/sendmany`, `/consolidateUnspents`, `/sweep`, `/accelerateTransaction`)
+ * are NOT exposed by `app.bitgo.com/api/v2`. They live in BitGo
+ * Express — a self-hosted node service that bundles `@bitgo/sdk-core`
+ * and runs the cryptographic signing locally before forwarding the
+ * signed tx to the platform. Calling them on the platform API
+ * returns "You have called a BitGo Express endpoint but this is the
+ * BitGo server."
+ *
+ * Self-managed (hot) wallets fundamentally need either Express
+ * running as a sidecar OR the SDK bundled in-process. Both options
+ * blow up bundle size and add operational complexity that doesn't
+ * fit a thin GitHub Action wrapper.
+ *
+ * Custodial wallets need neither. BitGo holds the keys and signs
+ * server-side, so we can drive the entire send flow over the
+ * platform REST API.
+ *
+ * ## Signing dispatch by wallet type
+ *
+ * Both flows converge on a `pendingApproval` that callers can poll
+ * via `wait-for-approval` (Layer 2) or react to via webhook
+ * (Layer 3).
+ *
+ *   • **TSS custodial** → `POST /wallet/:walletId/txrequests`
+ *     (note: NO coin prefix). The body is an `intent` envelope
+ *     with `recipients[].address.address` and
+ *     `recipients[].amount.{value, symbol}`. BitGo signs because
+ *     it holds both MPC shares.
+ *
+ *   • **Multi-sig (onchain) custodial** →
+ *     `POST /:coin/wallet/:walletId/tx/initiate` with a flat
+ *     `recipients` array. Returns HTTP 200 with body
+ *     `{ error: "Awaiting transaction signature", pendingApproval }`.
+ *     BitGo Trust signs and broadcasts.
+ *
+ * ## Session unlock
+ *
+ * Sensitive operations (sends, policy mutations) require a recent
+ * unlock. Call `unlock({ otp, duration })` once at the start of a
+ * sequence of mutating operations. The test environment accepts
+ * the magic OTP `000000`; production needs a real TOTP from the
+ * user's authenticator app, supplied via the `otp` action input.
  */
 
 
@@ -27946,12 +27980,17 @@ const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.ur
 const DEFAULT_API_URL = 'https://app.bitgo.com/api/v2'
 
 /**
- * Wallet types we know how to sign for. Cold wallets and BLS DKG
- * (ETH2 validator) wallets need separate signing flows that v0
- * doesn't support — we throw a clear error early rather than let
- * the API reject the request with a confusing message.
+ * Wallet `type` values we know how to drive. v0 supports custodial
+ * only — hot/cold wallets need a separate signing flow that lives
+ * outside this action.
  */
-const SIGNABLE_WALLET_TYPES = new Set(['tss', 'onchain'])
+const SUPPORTED_WALLET_TYPES = new Set(['custodial'])
+
+/**
+ * `multisigType` values that map to a real platform-API send path.
+ * `blsdkg` (ETH2 validator) and any other value lands in unsupported.
+ */
+const SUPPORTED_MULTISIG_TYPES = new Set(['tss', 'onchain'])
 
 /**
  * BitGo-specific error type. Extends W3ActionError so action-core's
@@ -27972,14 +28011,17 @@ class BitGoError extends W3ActionError {
  * into stable codes downstream consumers can match on.
  */
 function translateBitGoError(status, body) {
-  const name = body && (body.name || body.error || body.code)
+  const name = body && (body.name || body.code)
   const message = (body && body.error) || `BitGo API error (HTTP ${status})`
 
+  if (status === 401 && /unlock/i.test(message)) {
+    return new BitGoError('NEEDS_UNLOCK', message, { statusCode: status, details: body })
+  }
   if (status === 401 || status === 403) {
     return new BitGoError('BITGO_UNAUTHORIZED', message, { statusCode: status, details: body })
   }
   if (name === 'WalletLocked' || name === 'NeedUnlock') {
-    return new BitGoError('WALLET_LOCKED', message, { statusCode: status, details: body })
+    return new BitGoError('NEEDS_UNLOCK', message, { statusCode: status, details: body })
   }
   if (name === 'InsufficientFunds' || /insufficient/i.test(message)) {
     return new BitGoError('INSUFFICIENT_BALANCE', message, { statusCode: status, details: body })
@@ -27995,17 +28037,10 @@ class BitGoClient {
    * @param {object} opts
    * @param {string} opts.accessToken - BitGo access token (Bearer auth)
    * @param {string} [opts.enterpriseId] - Enterprise ID for create/list scoping
-   * @param {string} [opts.walletPassphrase] - Passphrase for signing operations
    * @param {string} [opts.apiUrl] - API base URL override
    * @param {number} [opts.timeout] - Per-request timeout in ms (default 30000)
    */
-  constructor({
-    accessToken,
-    enterpriseId,
-    walletPassphrase,
-    apiUrl = DEFAULT_API_URL,
-    timeout = 30_000,
-  } = {}) {
+  constructor({ accessToken, enterpriseId, apiUrl = DEFAULT_API_URL, timeout = 30_000 } = {}) {
     if (!accessToken) {
       throw new BitGoError(
         'MISSING_ACCESS_TOKEN',
@@ -28014,30 +28049,16 @@ class BitGoClient {
     }
     this.accessToken = accessToken
     this.enterpriseId = enterpriseId
-    this.walletPassphrase = walletPassphrase
     this.apiUrl = apiUrl.replace(/\/+$/, '')
     this.timeout = timeout
 
     // In-process cache for wallet metadata. Keyed by `${coin}:${walletId}`.
     // Lifetime is the action invocation only — we never persist across runs.
-    // Used by detectWalletType() to avoid re-fetching the same wallet
-    // when a single command (e.g. wait-for-approval) needs the metadata twice.
     this._walletCache = new Map()
   }
 
   /**
    * Internal: authenticated request to the BitGo API.
-   *
-   * BitGo returns 2xx with JSON body on success and 4xx/5xx with
-   * `{ error, name }` on failure. We translate non-2xx into typed
-   * BitGoError instances via translateBitGoError so command handlers
-   * can match on stable codes.
-   *
-   * @param {string} path - Path under apiUrl, with leading slash
-   * @param {object} [options]
-   * @param {string} [options.method] - HTTP method (default GET)
-   * @param {object} [options.body] - JSON body (will be serialized)
-   * @param {object} [options.query] - Query parameters
    */
   async _request(path, { method = 'GET', body, query } = {}) {
     let url = `${this.apiUrl}${path}`
@@ -28061,20 +28082,55 @@ class BitGoClient {
         timeout: this.timeout,
       })
     } catch (err) {
-      // action-core's request throws on non-2xx with statusCode and details.
-      // Translate into a BitGoError if it's a structured response.
+      // action-core throws W3ActionError with statusCode set and the
+      // response body jammed into the message as `${status}: ${text}`.
+      // Pull the body back out so we can translate the structured
+      // BitGo error fields (name, reqId, etc.) instead of throwing
+      // away everything except the HTTP status.
       if (err && typeof err === 'object' && 'statusCode' in err) {
-        throw translateBitGoError(err.statusCode, err.details || err.body || {})
+        let parsed = err.details || err.body || null
+        if (!parsed && typeof err.message === 'string') {
+          const match = err.message.match(/^\d+:\s*(.*)$/s)
+          const text = match ? match[1] : err.message
+          try {
+            parsed = text ? JSON.parse(text) : {}
+          } catch {
+            parsed = { error: text }
+          }
+        }
+        throw translateBitGoError(err.statusCode, parsed || {})
       }
       throw err
     }
   }
 
+  // ── Session ──────────────────────────────────────────────────────
+
   /**
-   * Fetch wallet metadata.
+   * Unlock the user session for sensitive operations.
    *
-   * Used directly for get-wallet, and indirectly by detectWalletType
-   * for any signing operation. Cached per (coin, walletId) for the
+   * BitGo gates sends and policy mutations behind a recent unlock,
+   * which requires a one-time code from the user's TOTP authenticator.
+   * The test environment accepts the magic OTP `000000`. Production
+   * accepts whatever code the bound authenticator app produces right
+   * now (so workflows must inject it via a secret).
+   *
+   * Duration is in seconds. The default 600s (10 min) covers a
+   * single workflow run with margin; the maximum BitGo allows is
+   * around an hour.
+   */
+  async unlock({ otp, duration = 600 } = {}) {
+    requireParam('otp', otp)
+    return this._request('/user/unlock', {
+      method: 'POST',
+      body: { otp: String(otp), duration },
+    })
+  }
+
+  // ── Wallet metadata ──────────────────────────────────────────────
+
+  /**
+   * Fetch wallet metadata. Cached per (coin, walletId) for the
    * duration of the action invocation.
    */
   async getWallet(coin, walletId) {
@@ -28091,25 +28147,19 @@ class BitGoClient {
   }
 
   /**
-   * Detect wallet signing model.
-   *
-   * Returns one of:
-   *   - 'tss'      → BitGo MPC TSS wallet
-   *   - 'onchain'  → on-chain multi-sig wallet
-   *   - 'blsdkg'   → ETH2 validator (BLS signing — different signing path)
-   *
-   * Falls back to 'onchain' if multisigType is missing (older wallets).
-   *
-   * Performance: one HTTP call the first time we see a (coin, walletId)
-   * pair, cached after that. The wait-for-approval polling loop will
-   * call this once and reuse the cached value.
+   * Return both `type` (custodial/hot/cold) and `multisigType`
+   * (tss/onchain/blsdkg) so the caller can dispatch on either axis.
+   * Cached via getWallet.
    */
   async detectWalletType(coin, walletId) {
     const wallet = await this.getWallet(coin, walletId)
-    return wallet.multisigType || 'onchain'
+    return {
+      type: wallet.type || 'custodial',
+      multisigType: wallet.multisigType || 'onchain',
+    }
   }
 
-  // ── Wallet management ────────────────────────────────────────────
+  // ── Tier 1: Wallet management ────────────────────────────────────
 
   async listWallets(coin, { enterpriseId, limit, prevId } = {}) {
     requireParam('coin', coin)
@@ -28181,59 +28231,73 @@ class BitGoClient {
     })
   }
 
-  // ── Tier 2: Transactions and signing ─────────────────────────────
-
   /**
-   * Build an unsigned transaction. Selects UTXOs (UTXO coins) or
-   * fetches the next nonce (account coins) as appropriate. The
-   * returned object includes a `txHex` or `tx` plus fee information.
-   * No signing happens here — see sendTransaction for the build +
-   * sign + broadcast path.
+   * Generate a new receive address on a wallet. Optional `label`
+   * tags it for accounting; `chain` selects an address chain
+   * (BitGo's internal address derivation, mostly relevant for UTXO
+   * coins).
    */
-  async buildTransaction(coin, walletId, { address, amount, feeRate } = {}) {
+  async createAddress(coin, walletId, { label, chain } = {}) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
-    requireParam('address', address)
-    requireParam('amount', amount)
-
-    const body = {
-      recipients: [{ address, amount: String(amount) }],
-    }
-    if (feeRate !== undefined && feeRate !== null && feeRate !== '') {
-      body.feeRate = String(feeRate)
-    }
-
-    return this._request(`/${coin}/wallet/${walletId}/tx/build`, {
+    const body = {}
+    if (label) body.label = label
+    if (chain !== undefined && chain !== null && chain !== '') body.chain = Number(chain)
+    return this._request(`/${coin}/wallet/${walletId}/address`, {
       method: 'POST',
       body,
     })
   }
 
   /**
-   * Build, sign, and broadcast a transaction.
-   *
-   * Auto-detects wallet type (TSS vs on-chain multi-sig) at runtime
-   * and validates that v0 supports it. Both supported types use the
-   * same `sendcoins` endpoint — BitGo's server handles the signing
-   * model selection. The detect call exists to fail fast on cold
-   * wallets and BLS DKG wallets, which need different signing paths
-   * not yet supported.
-   *
-   * If BitGo returns a pendingApproval response (the policy engine
-   * intercepted the tx), we translate it into our standard
-   * `{ status: "pending-approval", pendingApprovalId, correlationId }`
-   * shape and optionally auto-register a webhook for Layer 3
-   * async continuation.
+   * Compute the maximum amount the wallet can send in a single tx,
+   * accounting for fees. Returns a `{ maximumSpendable, coin }` shape.
    */
-  async sendTransaction(
+  async maximumSpendable(coin, walletId, { feeRate } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    return this._request(`/${coin}/wallet/${walletId}/maximumSpendable`, {
+      query: { feeRate },
+    })
+  }
+
+  /**
+   * Current network fee estimate for a coin. Returns the per-tier
+   * fee rates BitGo recommends.
+   */
+  async feeEstimate(coin) {
+    requireParam('coin', coin)
+    return this._request(`/${coin}/tx/fee`)
+  }
+
+  // ── Tier 2: Sends (custodial only) ───────────────────────────────
+
+  /**
+   * Custodial send — dispatches on the wallet's `multisigType`.
+   *
+   * Both paths produce a `pendingApproval` that BitGo's signing
+   * infrastructure resolves asynchronously. The caller can return
+   * immediately with the approval ID (default), poll synchronously
+   * via `wait-for-approval` (Layer 2), or auto-register a webhook
+   * (Layer 3).
+   *
+   * Wallet-type validation is strict: any non-custodial wallet, or
+   * a multisigType outside {tss, onchain}, fails fast with
+   * UNSUPPORTED_WALLET_TYPE before we touch the API.
+   *
+   * Returns one of:
+   *   - { status: 'pending-approval', pendingApprovalId, txRequestId?, correlationId, raw }
+   *   - { status: 'sent', txHash, correlationId, raw }
+   *   - { status: 'pending-approval', ..., webhookRegistration } when register-webhook-on-pending was set
+   */
+  async send(
     coin,
     walletId,
     {
       address,
       amount,
-      walletPassphrase,
-      feeRate,
       comment,
+      sequenceId,
       correlationId,
       registerWebhookOnPending,
       webhookUrl,
@@ -28243,101 +28307,64 @@ class BitGoClient {
     requireParam('wallet-id', walletId)
     requireParam('address', address)
     requireParam('amount', amount)
-    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
 
-    await this._validateWalletForSigning(coin, walletId)
+    await this._validateCustodialWallet(coin, walletId)
+    const { multisigType } = await this.detectWalletType(coin, walletId)
 
     const finalCorrelationId = correlationId || (0,external_node_crypto_.randomUUID)()
-    const body = {
-      address,
-      amount: String(amount),
-      walletPassphrase: walletPassphrase || this.walletPassphrase,
-      // Embed correlation ID in the comment so a future webhook can
-      // extract it. Use a stable marker prefix so the webhook
-      // receiver knows where to look.
-      comment: composeComment(comment, finalCorrelationId),
-    }
-    if (feeRate !== undefined && feeRate !== null && feeRate !== '') {
-      body.feeRate = String(feeRate)
-    }
+    const finalComment = composeComment(comment, finalCorrelationId)
 
-    const result = await this._request(`/${coin}/wallet/${walletId}/sendcoins`, {
-      method: 'POST',
-      body,
-    })
+    let result
+    let txRequestId = null
+
+    if (multisigType === 'tss') {
+      // TSS path: POST /wallet/:id/txrequests with the nested intent.
+      // Note no coin prefix — BitGo identifies the coin from the
+      // wallet ID itself for this endpoint.
+      const intent = {
+        intentType: 'payment',
+        recipients: [
+          {
+            address: { address },
+            amount: { value: String(amount), symbol: coin },
+          },
+        ],
+      }
+      if (finalComment) intent.comment = finalComment
+      if (sequenceId) intent.sequenceId = sequenceId
+
+      result = await this._request(`/wallet/${walletId}/txrequests`, {
+        method: 'POST',
+        body: { intent, apiVersion: 'full', preview: false },
+      })
+      txRequestId = result?.txRequestId || null
+    } else {
+      // Multi-sig path: POST /:coin/wallet/:id/tx/initiate with a
+      // flat recipients array. Returns 200 with `{ error, pendingApproval }`.
+      const body = {
+        recipients: [{ address, amount: String(amount) }],
+      }
+      if (finalComment) body.comment = finalComment
+      if (sequenceId) body.sequenceId = sequenceId
+
+      result = await this._request(`/${coin}/wallet/${walletId}/tx/initiate`, {
+        method: 'POST',
+        body,
+      })
+    }
 
     return this._handleSendResult(coin, walletId, result, {
       correlationId: finalCorrelationId,
+      txRequestId,
       registerWebhookOnPending,
       webhookUrl,
     })
   }
 
   /**
-   * Batch send to multiple recipients in a single transaction. The
-   * caller passes the recipients array (and any other sendmany
-   * fields) via the `body` JSON input.
+   * Get a single transaction by id (the BitGo internal tx record,
+   * not the on-chain hash).
    */
-  async sendMany(coin, walletId, { walletPassphrase, body, correlationId } = {}) {
-    requireParam('coin', coin)
-    requireParam('wallet-id', walletId)
-    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
-    if (!body || typeof body !== 'object') {
-      throw new BitGoError('MISSING_BODY', 'send-many requires a JSON body with recipients')
-    }
-    if (!Array.isArray(body.recipients) || body.recipients.length === 0) {
-      throw new BitGoError(
-        'INVALID_BODY',
-        'send-many body must include a non-empty recipients array',
-      )
-    }
-
-    await this._validateWalletForSigning(coin, walletId)
-
-    const finalCorrelationId = correlationId || (0,external_node_crypto_.randomUUID)()
-    const payload = {
-      ...body,
-      walletPassphrase: walletPassphrase || this.walletPassphrase,
-      comment: composeComment(body.comment, finalCorrelationId),
-    }
-
-    const result = await this._request(`/${coin}/wallet/${walletId}/sendmany`, {
-      method: 'POST',
-      body: payload,
-    })
-
-    return this._handleSendResult(coin, walletId, result, {
-      correlationId: finalCorrelationId,
-    })
-  }
-
-  /**
-   * Speed up a stuck transaction. Uses RBF on Bitcoin and similar
-   * acceleration paths on EVM coins (replacement tx with higher
-   * gas/fee). The caller supplies the new fee rate.
-   */
-  async accelerateTransaction(coin, walletId, txId, { walletPassphrase, feeRate } = {}) {
-    requireParam('coin', coin)
-    requireParam('wallet-id', walletId)
-    requireParam('tx-id', txId)
-    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
-
-    await this._validateWalletForSigning(coin, walletId)
-
-    const body = {
-      walletPassphrase: walletPassphrase || this.walletPassphrase,
-      cpfpTxIds: [txId],
-    }
-    if (feeRate !== undefined && feeRate !== null && feeRate !== '') {
-      body.feeRate = String(feeRate)
-    }
-
-    return this._request(`/${coin}/wallet/${walletId}/accelerateTransaction`, {
-      method: 'POST',
-      body,
-    })
-  }
-
   async getTransaction(coin, walletId, txId) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
@@ -28354,154 +28381,133 @@ class BitGoClient {
   }
 
   /**
-   * Consolidate UTXOs (UTXO coins only). BitGo will return a
-   * helpful error if called on an account-based coin like ETH.
+   * Get a single transfer (BitGo's enriched view of a tx including
+   * recipients, value movement, and confirmation state).
    */
-  async consolidate(coin, walletId, { walletPassphrase, body } = {}) {
+  async getTransfer(coin, walletId, transferId) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
-    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+    requireParam('transfer-id', transferId)
+    return this._request(`/${coin}/wallet/${walletId}/transfer/${transferId}`)
+  }
 
-    await this._validateWalletForSigning(coin, walletId)
-
-    const payload = {
-      ...(body || {}),
-      walletPassphrase: walletPassphrase || this.walletPassphrase,
-    }
-
-    return this._request(`/${coin}/wallet/${walletId}/consolidateUnspents`, {
-      method: 'POST',
-      body: payload,
+  async listTransfers(coin, walletId, { limit, prevId } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    return this._request(`/${coin}/wallet/${walletId}/transfer`, {
+      query: { limit, prevId },
     })
   }
 
-  async sweep(coin, walletId, { address, walletPassphrase } = {}) {
-    requireParam('coin', coin)
+  // ── TSS-specific tx requests ─────────────────────────────────────
+
+  async getTxRequest(walletId, txRequestId) {
     requireParam('wallet-id', walletId)
-    requireParam('address', address)
-    requireParam('wallet-passphrase', walletPassphrase || this.walletPassphrase)
+    requireParam('tx-request-id', txRequestId)
+    return this._request(`/wallet/${walletId}/txrequests/${txRequestId}`)
+  }
 
-    await this._validateWalletForSigning(coin, walletId)
-
-    return this._request(`/${coin}/wallet/${walletId}/sweep`, {
-      method: 'POST',
-      body: {
-        address,
-        walletPassphrase: walletPassphrase || this.walletPassphrase,
-      },
-    })
+  async listTxRequests(walletId) {
+    requireParam('wallet-id', walletId)
+    return this._request(`/wallet/${walletId}/txrequests`)
   }
 
   // ── Internal helpers ─────────────────────────────────────────────
 
   /**
-   * Throw a clean BitGoError if the wallet's signing model isn't
-   * something v0 supports. The detect call is cached so this is
-   * essentially free for all but the first signing operation
-   * against a given wallet in a single action invocation.
+   * Throw a clean BitGoError if the wallet isn't custodial or its
+   * signing model isn't supported. The detect call is cached so
+   * this is essentially free for all but the first signing
+   * operation against a given wallet in a single action invocation.
    */
-  async _validateWalletForSigning(coin, walletId) {
-    const type = await this.detectWalletType(coin, walletId)
-    if (!SIGNABLE_WALLET_TYPES.has(type)) {
+  async _validateCustodialWallet(coin, walletId) {
+    const { type, multisigType } = await this.detectWalletType(coin, walletId)
+    if (!SUPPORTED_WALLET_TYPES.has(type)) {
       throw new BitGoError(
         'UNSUPPORTED_WALLET_TYPE',
-        `Wallet type "${type}" is not supported for signing in v0. Supported types: ${[...SIGNABLE_WALLET_TYPES].join(', ')}.`,
+        `Wallet type "${type}" is not supported. v0 supports custodial wallets only — for hot/self-managed wallets, use BitGo Express or a SDK-based action.`,
       )
     }
-    return type
+    if (!SUPPORTED_MULTISIG_TYPES.has(multisigType)) {
+      throw new BitGoError(
+        'UNSUPPORTED_MULTISIG_TYPE',
+        `multisigType "${multisigType}" is not supported. Supported types: ${[...SUPPORTED_MULTISIG_TYPES].join(', ')}.`,
+      )
+    }
   }
 
   /**
-   * Translate a BitGo send response into our standard shape.
+   * Translate a BitGo send response (tx/initiate or txrequests)
+   * into our standard pending-approval shape.
    *
-   * On success, BitGo returns a transaction object with `txid` (or
-   * `txHash` on EVM coins). On policy hold, BitGo returns a
-   * `pendingApproval` object — we surface that explicitly with
-   * `status: "pending-approval"` and the correlation ID so the
-   * workflow author can react via wait-for-approval (Layer 2) or
-   * wait for a webhook to fire a follow-up workflow (Layer 3).
+   * The two underlying endpoints have very different bodies:
+   *   - /tx/initiate returns `{ error, pendingApproval }` with HTTP 200
+   *   - /txrequests returns `{ txRequestId, state, intent, ... }` and
+   *     may also embed a `pendingApproval` if policy intercepts
+   *
+   * Both reduce to "tracked async work BitGo will complete" — we
+   * surface a uniform pending-approval result so callers don't
+   * have to know which underlying flow ran.
    */
   async _handleSendResult(
     coin,
     walletId,
     result,
-    { correlationId, registerWebhookOnPending, webhookUrl } = {},
+    { correlationId, txRequestId, registerWebhookOnPending, webhookUrl } = {},
   ) {
-    const pendingApproval = result?.pendingApproval || result?.status === 'pendingApproval'
+    const pendingApprovalId =
+      result?.pendingApproval?.id || result?.pendingApprovalId || result?.id || null
 
-    if (pendingApproval) {
-      // BitGo can return either { pendingApproval: { id, ... } } or
-      // a flatter shape with status==="pendingApproval". Cover both.
-      const pendingApprovalId =
-        result?.pendingApproval?.id || result?.pendingApprovalId || result?.id || null
+    const effectiveTxRequestId = txRequestId || result?.txRequestId || null
 
-      // Optionally register a webhook so the future async receiver
-      // can fire a follow-up workflow when the approval resolves.
-      // Best-effort: a webhook registration failure does NOT mask
-      // the pending-approval result the caller cares about.
+    // Multi-sig: tx/initiate returns 200 with the pendingApproval
+    // embedded. TSS: txrequests returns the request envelope and
+    // BitGo's signing infra picks it up.
+    if (pendingApprovalId || effectiveTxRequestId) {
+      const base = {
+        status: 'pending-approval',
+        pendingApprovalId,
+        txRequestId: effectiveTxRequestId,
+        correlationId,
+        raw: result,
+      }
+
       if (registerWebhookOnPending && webhookUrl) {
         try {
           await this.addWebhook(coin, walletId, {
             url: webhookUrl,
             type: 'pendingApproval',
           })
-        } catch (err) {
-          // Surface the webhook failure as a side note in the result,
-          // but do not throw — the workflow already needs to handle
-          // the pending-approval state and the webhook is bonus.
-          return {
-            status: 'pending-approval',
-            pendingApprovalId,
-            correlationId,
-            webhookRegistration: {
-              attempted: true,
-              registered: false,
-              error: err?.message || String(err),
-            },
-            raw: result,
-          }
-        }
-        return {
-          status: 'pending-approval',
-          pendingApprovalId,
-          correlationId,
-          webhookRegistration: {
+          base.webhookRegistration = {
             attempted: true,
             registered: true,
             url: webhookUrl,
-          },
-          raw: result,
+          }
+        } catch (err) {
+          // Best-effort: webhook failures don't mask the pending result.
+          base.webhookRegistration = {
+            attempted: true,
+            registered: false,
+            error: err?.message || String(err),
+          }
         }
       }
 
-      return {
-        status: 'pending-approval',
-        pendingApprovalId,
-        correlationId,
-        raw: result,
-      }
+      return base
     }
 
-    // Sent: extract the canonical tx hash and surface as a stable shape.
+    // Defensive: if neither id is present but the call returned a
+    // success body, surface whatever tx hash we can find.
     const txHash =
       result?.txid || result?.txHash || result?.transfer?.txid || result?.transfer?.txHash || null
-
-    return {
-      status: 'sent',
-      txHash,
-      correlationId,
-      raw: result,
-    }
+    return { status: 'sent', txHash, correlationId, raw: result }
   }
 
   // ── Tier 3: Policy and approval ──────────────────────────────────
 
   /**
-   * List policy rules attached to a wallet.
-   *
-   * BitGo returns the policy as part of the wallet object, so this
-   * is a thin convenience over getWallet that surfaces just the
-   * policy document for callers who only care about the rules.
+   * List policy rules attached to a wallet. Returns a thin view
+   * over getWallet's `admin.policy` payload.
    */
   async listPolicies(coin, walletId) {
     requireParam('coin', coin)
@@ -28516,12 +28522,6 @@ class BitGoClient {
     }
   }
 
-  /**
-   * Add or update a policy rule (spending limit, velocity,
-   * allowlist, etc.). The full rule definition is passed via the
-   * body input — BitGo's policy schema is rich and per-rule-type,
-   * so we don't try to model it in TypeScript-style helpers.
-   */
   async setPolicyRule(coin, walletId, body) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
@@ -28537,9 +28537,6 @@ class BitGoClient {
     })
   }
 
-  /**
-   * Remove a policy rule by ID.
-   */
   async removePolicyRule(coin, walletId, ruleId) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
@@ -28550,10 +28547,6 @@ class BitGoClient {
     })
   }
 
-  /**
-   * List pending approvals scoped to a wallet, an enterprise, or
-   * (if neither is supplied) the constructor's default enterprise.
-   */
   async listPendingApprovals({ walletId, enterpriseId } = {}) {
     return this._request(`/pendingapprovals`, {
       query: {
@@ -28563,26 +28556,21 @@ class BitGoClient {
     })
   }
 
-  /**
-   * Approve a pending approval. If the approval is for a
-   * tx-signing operation, BitGo also needs the wallet passphrase
-   * to actually sign the transaction. Reads-only approvals
-   * (e.g. policy changes) don't need the passphrase.
-   */
-  async approvePending(pendingApprovalId, { walletPassphrase } = {}) {
+  async getPendingApproval(pendingApprovalId) {
+    requireParam('pending-approval-id', pendingApprovalId)
+    return this._request(`/pendingapprovals/${pendingApprovalId}`)
+  }
+
+  async approvePending(pendingApprovalId, { otp } = {}) {
     requireParam('pending-approval-id', pendingApprovalId)
     const body = { state: 'approved' }
-    const passphrase = walletPassphrase || this.walletPassphrase
-    if (passphrase) body.walletPassphrase = passphrase
+    if (otp) body.otp = String(otp)
     return this._request(`/pendingapprovals/${pendingApprovalId}`, {
       method: 'PUT',
       body,
     })
   }
 
-  /**
-   * Reject a pending approval.
-   */
   async rejectPending(pendingApprovalId) {
     requireParam('pending-approval-id', pendingApprovalId)
     return this._request(`/pendingapprovals/${pendingApprovalId}`, {
@@ -28594,21 +28582,11 @@ class BitGoClient {
   // ── Layer 2: Synchronous wait-for-approval ───────────────────────
 
   /**
-   * Block until a pending approval transitions to a terminal state
-   * (approved or rejected) or until the timeout elapses.
+   * Block until a pending approval reaches a terminal state.
    *
    * Polling cadence: starts at 5s, exponentially backs off (×1.5)
    * to a 30s ceiling. The first poll happens immediately so
    * already-resolved approvals return on the first call.
-   *
-   * Returns:
-   *   - { status: "approved",  raw, txHash? } when state === "approved"
-   *   - { status: "rejected",  raw }          when state === "rejected"
-   *   - { status: "timeout",   raw }          when timeout exceeded
-   *
-   * The txHash is extracted only if the underlying approval was a
-   * tx-signing operation that has a transactions[0] entry once
-   * approved.
    */
   async waitForApproval(pendingApprovalId, { timeout = 300, sleep = defaultSleep } = {}) {
     requireParam('pending-approval-id', pendingApprovalId)
@@ -28635,7 +28613,6 @@ class BitGoClient {
       if (approval?.state === 'rejected') {
         return { status: 'rejected', pendingApprovalId, raw: approval }
       }
-      // Sleep, but never beyond the deadline.
       const remaining = deadline - Date.now()
       if (remaining <= 0) break
       await sleep(Math.min(interval, remaining))
@@ -28647,10 +28624,6 @@ class BitGoClient {
 
   // ── Tier 4: Webhook registration ─────────────────────────────────
 
-  /**
-   * Register a webhook against a wallet for transfer or
-   * pendingApproval events. Sent as POST /:coin/wallet/:id/webhooks.
-   */
   async addWebhook(coin, walletId, { url, type = 'pendingApproval' } = {}) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
@@ -28713,7 +28686,6 @@ function composeComment(userComment, correlationId) {
 
 /**
  * Helper: throw a structured BitGoError when a required input is missing.
- * Keeps command handlers free of repeated `if (!x) throw ...` lines.
  */
 function requireParam(name, value) {
   if (value === undefined || value === null || value === '') {
@@ -28729,28 +28701,36 @@ function requireParam(name, value) {
 /**
  * W3 BitGo Action — command dispatch.
  *
- * Each command handler is an async function that:
- *   1. Reads inputs via @actions/core
- *   2. Calls a method on BitGoClient
- *   3. Sets the JSON output via setJsonOutput
+ * Custodial-wallet-only signing. Each handler reads inputs via
+ * @actions/core, calls a method on BitGoClient, and writes the
+ * result to the `result` output as JSON.
  *
- * The createCommandRouter from @w3-io/action-core handles dispatch
- * by command name and reports unknown commands with the available list.
- *
- * Tier 2 (transactions/signing), Tier 3 (policy/approval), Layer 2
- * (wait-for-approval), and Tier 4 (webhooks) land in subsequent commits.
+ * The send commands return a pending-approval result by default;
+ * use wait-for-approval to block until terminal state, or set
+ * register-webhook-on-pending=true with webhook-url to fire a
+ * follow-up workflow on resolution.
  */
 
 function getClient() {
   return new BitGoClient({
     accessToken: lib_core.getInput('access-token', { required: true }),
     enterpriseId: lib_core.getInput('enterprise-id') || undefined,
-    walletPassphrase: lib_core.getInput('wallet-passphrase') || undefined,
     apiUrl: lib_core.getInput('api-url') || undefined,
   })
 }
 
 const handlers = {
+  // ── Session ───────────────────────────────────────────────────
+
+  unlock: async () => {
+    const client = getClient()
+    const result = await client.unlock({
+      otp: lib_core.getInput('otp', { required: true }),
+      duration: Number(lib_core.getInput('duration')) || undefined,
+    })
+    setJsonOutput('result', result)
+  },
+
   // ── Tier 1: Wallet management ─────────────────────────────────
 
   'list-wallets': async () => {
@@ -28796,11 +28776,10 @@ const handlers = {
 
   'freeze-wallet': async () => {
     const client = getClient()
-    const body = lib_core.getInput('body') ? parseJsonInput('body') : {}
     const result = await client.freezeWallet(
       lib_core.getInput('coin', { required: true }),
       lib_core.getInput('wallet-id', { required: true }),
-      body,
+      parseJsonInput('body') || {},
     )
     setJsonOutput('result', result)
   },
@@ -28827,65 +28806,52 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
-  // ── Tier 2: Transactions and signing ──────────────────────────
-
-  'build-transaction': async () => {
+  'create-address': async () => {
     const client = getClient()
-    const result = await client.buildTransaction(
+    const result = await client.createAddress(
       lib_core.getInput('coin', { required: true }),
       lib_core.getInput('wallet-id', { required: true }),
       {
-        address: lib_core.getInput('address', { required: true }),
-        amount: lib_core.getInput('amount', { required: true }),
+        label: lib_core.getInput('label') || undefined,
+        chain: lib_core.getInput('chain') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'maximum-spendable': async () => {
+    const client = getClient()
+    const result = await client.maximumSpendable(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      {
         feeRate: lib_core.getInput('fee-rate') || undefined,
       },
     )
     setJsonOutput('result', result)
   },
+
+  'fee-estimate': async () => {
+    const client = getClient()
+    const result = await client.feeEstimate(lib_core.getInput('coin', { required: true }))
+    setJsonOutput('result', result)
+  },
+
+  // ── Tier 2: Sends and tx queries ──────────────────────────────
 
   'send-transaction': async () => {
     const client = getClient()
-    const result = await client.sendTransaction(
+    const result = await client.send(
       lib_core.getInput('coin', { required: true }),
       lib_core.getInput('wallet-id', { required: true }),
       {
         address: lib_core.getInput('address', { required: true }),
         amount: lib_core.getInput('amount', { required: true }),
-        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
-        feeRate: lib_core.getInput('fee-rate') || undefined,
         comment: lib_core.getInput('comment') || undefined,
+        sequenceId: lib_core.getInput('sequence-id') || undefined,
         correlationId: lib_core.getInput('correlation-id') || undefined,
-        registerWebhookOnPending: lib_core.getInput('register-webhook-on-pending') === 'true',
+        registerWebhookOnPending: lib_core.getBooleanInput('register-webhook-on-pending') || undefined,
         webhookUrl: lib_core.getInput('webhook-url') || undefined,
-      },
-    )
-    setJsonOutput('result', result)
-  },
-
-  'send-many': async () => {
-    const client = getClient()
-    const body = parseJsonInput('body')
-    const result = await client.sendMany(
-      lib_core.getInput('coin', { required: true }),
-      lib_core.getInput('wallet-id', { required: true }),
-      {
-        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
-        body,
-        correlationId: lib_core.getInput('correlation-id') || undefined,
-      },
-    )
-    setJsonOutput('result', result)
-  },
-
-  'accelerate-transaction': async () => {
-    const client = getClient()
-    const result = await client.accelerateTransaction(
-      lib_core.getInput('coin', { required: true }),
-      lib_core.getInput('wallet-id', { required: true }),
-      lib_core.getInput('tx-id', { required: true }),
-      {
-        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
-        feeRate: lib_core.getInput('fee-rate') || undefined,
       },
     )
     setJsonOutput('result', result)
@@ -28914,30 +28880,43 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
-  consolidate: async () => {
+  'get-transfer': async () => {
     const client = getClient()
-    const body = lib_core.getInput('body') ? parseJsonInput('body') : undefined
-    const result = await client.consolidate(
+    const result = await client.getTransfer(
+      lib_core.getInput('coin', { required: true }),
+      lib_core.getInput('wallet-id', { required: true }),
+      lib_core.getInput('transfer-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'list-transfers': async () => {
+    const client = getClient()
+    const result = await client.listTransfers(
       lib_core.getInput('coin', { required: true }),
       lib_core.getInput('wallet-id', { required: true }),
       {
-        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
-        body,
+        limit: lib_core.getInput('limit') || undefined,
+        prevId: lib_core.getInput('prev-id') || undefined,
       },
     )
     setJsonOutput('result', result)
   },
 
-  sweep: async () => {
+  // ── TSS-specific tx requests ──────────────────────────────────
+
+  'get-tx-request': async () => {
     const client = getClient()
-    const result = await client.sweep(
-      lib_core.getInput('coin', { required: true }),
+    const result = await client.getTxRequest(
       lib_core.getInput('wallet-id', { required: true }),
-      {
-        address: lib_core.getInput('address', { required: true }),
-        walletPassphrase: lib_core.getInput('wallet-passphrase', { required: true }),
-      },
+      lib_core.getInput('tx-request-id', { required: true }),
     )
+    setJsonOutput('result', result)
+  },
+
+  'list-tx-requests': async () => {
+    const client = getClient()
+    const result = await client.listTxRequests(lib_core.getInput('wallet-id', { required: true }))
     setJsonOutput('result', result)
   },
 
@@ -28982,12 +28961,20 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
+  'get-pending-approval': async () => {
+    const client = getClient()
+    const result = await client.getPendingApproval(
+      lib_core.getInput('pending-approval-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
   'approve-pending': async () => {
     const client = getClient()
     const result = await client.approvePending(
       lib_core.getInput('pending-approval-id', { required: true }),
       {
-        walletPassphrase: lib_core.getInput('wallet-passphrase') || undefined,
+        otp: lib_core.getInput('otp') || undefined,
       },
     )
     setJsonOutput('result', result)
@@ -29057,6 +29044,14 @@ async function run() {
   } catch (error) {
     if (error instanceof BitGoError) {
       lib_core.setFailed(`BitGo error (${error.code}): ${error.message}`)
+      // Surface the API response body so callers can debug. Gated
+      // to debug for CI runs and BITGO_DEBUG=1 for local dev.
+      if (error.details) {
+        lib_core.debug(`BitGo error details: ${JSON.stringify(error.details)}`)
+        if (process.env.BITGO_DEBUG === '1') {
+          process.stderr.write(`BitGo error details: ${JSON.stringify(error.details, null, 2)}\n`)
+        }
+      }
     } else {
       handleError(error)
     }
