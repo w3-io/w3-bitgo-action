@@ -193,18 +193,18 @@ Token batch sends use BitGo's batcher contract under the hood, which requires a 
 
 Both paths produce a `pendingApproval` that BitGo's signing infrastructure resolves async. The result is a uniform pending-approval shape regardless of which underlying flow ran.
 
-| Input                         | Required    | Description                                                                                                                                                                  |
-| ----------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `coin`                        | yes         | Coin ticker. For tokens, use the BitGo token code (e.g. `hteth:tusdc`, `eth:usdc`).                                                                                          |
-| `wallet-id`                   | yes         | Wallet ID.                                                                                                                                                                   |
-| `address`                     | conditional | Destination address (single-recipient shortcut).                                                                                                                             |
-| `amount`                      | conditional | Amount in base units (single-recipient shortcut).                                                                                                                            |
-| `recipients`                  | conditional | JSON array `[{"address":"0x...","amount":"1000"},...]` for batch sends. Mutually exclusive with `address`+`amount` — when provided, takes precedence.                        |
-| `comment`                     | no          | Free-form comment. The action appends `[w3-corr:<id>]` automatically.                                                                                                        |
-| `sequence-id`                 | no          | Client sequence ID for idempotent sends.                                                                                                                                     |
-| `correlation-id`              | no          | Workflow correlation ID. Auto-generated UUID if omitted.                                                                                                                     |
-| `register-webhook-on-pending` | no          | If `"true"` and the send returns a pending approval, auto-register a webhook against `webhook-url` for Layer 3 async continuation.                                           |
-| `webhook-url`                 | no          | Required when `register-webhook-on-pending` is `"true"`.                                                                                                                     |
+| Input                         | Required    | Description                                                                                                                                           |
+| ----------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coin`                        | yes         | Coin ticker. For tokens, use the BitGo token code (e.g. `hteth:tusdc`, `eth:usdc`).                                                                   |
+| `wallet-id`                   | yes         | Wallet ID.                                                                                                                                            |
+| `address`                     | conditional | Destination address (single-recipient shortcut).                                                                                                      |
+| `amount`                      | conditional | Amount in base units (single-recipient shortcut).                                                                                                     |
+| `recipients`                  | conditional | JSON array `[{"address":"0x...","amount":"1000"},...]` for batch sends. Mutually exclusive with `address`+`amount` — when provided, takes precedence. |
+| `comment`                     | no          | Free-form comment. The action appends `[w3-corr:<id>]` automatically.                                                                                 |
+| `sequence-id`                 | no          | Client sequence ID for idempotent sends.                                                                                                              |
+| `correlation-id`              | no          | Workflow correlation ID. Auto-generated UUID if omitted.                                                                                              |
+| `register-webhook-on-pending` | no          | If `"true"` and the send returns a pending approval, auto-register a webhook against `webhook-url` for Layer 3 async continuation.                    |
+| `webhook-url`                 | no          | Required when `register-webhook-on-pending` is `"true"`.                                                                                              |
 
 #### Examples
 
@@ -228,10 +228,10 @@ Single recipient, ERC-20 token:
   with:
     command: send-transaction
     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-    coin: hteth:tusdc          # token code, not native eth
+    coin: hteth:tusdc # token code, not native eth
     wallet-id: ${{ secrets.BITGO_WALLET_ID }}
     address: '0x...'
-    amount: '1000000'           # USDC has 6 decimals
+    amount: '1000000' # USDC has 6 decimals
 ```
 
 Batch send (payroll, distribution):
