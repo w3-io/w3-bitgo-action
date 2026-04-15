@@ -1,39 +1,45 @@
 # E2E Test Results
 
-Last verified: 2026-04-15
-
-## Environment
-
-- W3 local network (3-node localnet)
-- Protocol: master (includes EIP-712, bridge-allow expansion, nonce manager)
-- Runner image: w3io/w3-runner (Node 20/24)
+> Last verified: 2026-04-15
 
 ## Prerequisites
 
-- W3 local network running (make dev)
-- W3_SECRET_BITGO_ACCESS_TOKEN set to a BitGo test environment access token
-- Uses BitGo test environment (app.bitgo-test.com) by default
+| Credential | Env var | Source |
+|-----------|---------|--------|
+| BitGo access token (test env) | `BITGO_ACCESS_TOKEN` | app.bitgo-test.com |
 
 ## Results
 
-| Step | Command | Status | Notes |
-|------|---------|--------|-------|
-| 1 | unlock | PASS | Session unlock with OTP |
-| 2 | list-wallets | PASS | hteth, limit 5 |
-| 3 | extract wallet ID | PASS | Helper step (jq parse) |
-| 4 | get-wallet | PASS | By wallet ID |
-| 5 | get-balance | PASS | Wallet balance |
-| 6 | maximum-spendable | PASS | Max spendable amount |
-| 7 | fee-estimate | PASS | hteth fee estimate |
-| 8 | list-addresses | PASS | Wallet addresses, limit 5 |
-| 9 | create-address | PASS | New address with label |
-| 10 | list-transactions | PASS | Wallet transactions, limit 5 |
-| 11 | list-transfers | PASS | Wallet transfers, limit 5 |
-| 12 | list-tx-requests | PASS | TSS transaction requests |
-| 13 | list-policies | PASS | Wallet policies |
-| 14 | list-pending-approvals | PASS | Pending approvals |
-| 15 | list-webhooks | PASS | Wallet webhooks |
+| # | Step | Command | Status | Notes |
+|---|------|---------|--------|-------|
+| 1 | Unlock session | `unlock` | PASS | OTP: 000000 (test env) |
+| 2 | List wallets | `list-wallets` | PASS | coin: hteth |
+| 3 | Extract wallet ID | (run step) | PASS | jq extraction |
+| 4 | Get a wallet | `get-wallet` | PASS | |
+| 5 | Get wallet balance | `get-balance` | PASS | |
+| 6 | Get maximum spendable | `maximum-spendable` | PASS | |
+| 7 | Get fee estimate | `fee-estimate` | PASS | |
+| 8 | List addresses | `list-addresses` | PASS | |
+| 9 | Create a new address | `create-address` | PASS | |
+| 10 | List transactions | `list-transactions` | PASS | |
+| 11 | List transfers | `list-transfers` | PASS | |
+| 12 | List TSS transaction requests | `list-tx-requests` | PASS | |
+| 13 | List wallet policies | `list-policies` | PASS | |
+| 14 | List pending approvals | `list-pending-approvals` | PASS | |
+| 15 | List webhooks | `list-webhooks` | PASS | |
 
-## Known Limitations
+## Skipped Commands
 
-- None. All commands tested against BitGo test environment.
+| Command | Reason |
+|---------|--------|
+| `send` | Requires funded wallet; would move real funds |
+
+## How to run
+
+```bash
+# Export credentials
+export BITGO_ACCESS_TOKEN="..."
+
+# Run
+w3 workflow test --execute test/workflows/e2e.yaml
+```
