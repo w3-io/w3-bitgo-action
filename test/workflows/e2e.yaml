@@ -11,149 +11,154 @@
 #   - Uses BitGo test environment (app.bitgo-test.com) by default
 
 name: bitgo-e2e
+on:
+  workflow_dispatch: {}
 
-steps:
-  # ── Session ────────────────────────────────────────────────────────────
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # ── Session ────────────────────────────────────────────────────────────
 
-  - name: Unlock session
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: unlock
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      otp: "000000"
-      duration: "600"
+      - name: Unlock session
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: unlock
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          otp: "000000"
+          duration: "600"
 
-  # ── Wallets ────────────────────────────────────────────────────────────
+      # ── Wallets ────────────────────────────────────────────────────────────
 
-  - name: List wallets
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-wallets
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      limit: "5"
+      - name: List wallets
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-wallets
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          limit: "5"
 
-  - name: Get a wallet
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: get-wallet
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: Get a wallet
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: get-wallet
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
 
-  - name: Get wallet balance
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: get-balance
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: Get wallet balance
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: get-balance
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
 
-  - name: Get maximum spendable
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: maximum-spendable
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: Get maximum spendable
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: maximum-spendable
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
 
-  - name: Get fee estimate
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: fee-estimate
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
+      - name: Get fee estimate
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: fee-estimate
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
 
-  # ── Addresses ──────────────────────────────────────────────────────────
+      # ── Addresses ──────────────────────────────────────────────────────────
 
-  - name: List addresses
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-addresses
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
-      limit: "5"
+      - name: List addresses
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-addresses
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          limit: "5"
 
-  - name: Create a new address
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: create-address
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
-      label: e2e-test-address
+      - name: Create a new address
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: create-address
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          label: e2e-test-address
 
-  # ── Transactions & Transfers ───────────────────────────────────────────
+      # ── Transactions & Transfers ───────────────────────────────────────────
 
-  - name: List transactions
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-transactions
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
-      limit: "5"
+      - name: List transactions
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-transactions
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          limit: "5"
 
-  - name: List transfers
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-transfers
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
-      limit: "5"
+      - name: List transfers
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-transfers
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          limit: "5"
 
-  # ── TSS Transaction Requests ───────────────────────────────────────────
+      # ── TSS Transaction Requests ───────────────────────────────────────────
 
-  - name: List TSS transaction requests
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-tx-requests
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: List TSS transaction requests
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-tx-requests
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
 
-  # ── Policies ───────────────────────────────────────────────────────────
+      # ── Policies ───────────────────────────────────────────────────────────
 
-  - name: List wallet policies
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-policies
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: List wallet policies
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-policies
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
 
-  # ── Pending Approvals ──────────────────────────────────────────────────
+      # ── Pending Approvals ──────────────────────────────────────────────────
 
-  - name: List pending approvals
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-pending-approvals
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: List pending approvals
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-pending-approvals
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
 
-  # ── Webhooks ───────────────────────────────────────────────────────────
+      # ── Webhooks ───────────────────────────────────────────────────────────
 
-  - name: List webhooks
-    uses: w3-io/w3-bitgo-action@v0
-    with:
-      command: list-webhooks
-      access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
-      api-url: https://app.bitgo-test.com/api/v2
-      coin: hteth
-      wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+      - name: List webhooks
+        uses: w3-io/w3-bitgo-action@v0
+        with:
+          command: list-webhooks
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: https://app.bitgo-test.com/api/v2
+          coin: hteth
+          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
