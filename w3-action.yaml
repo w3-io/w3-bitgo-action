@@ -21,6 +21,15 @@ context: >
   wait-for-approval to block synchronously (Layer 2).
 
 commands:
+  # ── Session ───────────────────────────────────────────────────────
+  - name: unlock
+    description: Unlock the session with an OTP code.
+    inputs:
+      otp: { type: string, required: true, description: One-time password }
+      duration: { type: number, required: false, description: Session duration in seconds }
+    outputs:
+      result: { type: object, description: 'Unlock result' }
+
   # ── Tier 1: Wallet management ──────────────────────────────────────
   - name: list-wallets
     description: List wallets in the enterprise.
@@ -92,18 +101,33 @@ commands:
     outputs:
       result: { type: object, description: 'Address list with pagination cursor' }
 
-  # ── Tier 2: Transactions and signing ───────────────────────────────
-  - name: build-transaction
-    description: Build an unsigned transaction. Selects UTXOs or fetches the next nonce as appropriate.
+  - name: create-address
+    description: Create a new receive address for a wallet.
     inputs:
       coin: { type: string, required: true, description: Coin ticker }
       wallet-id: { type: string, required: true, description: Wallet ID }
-      address: { type: string, required: true, description: Destination address }
-      amount: { type: string, required: true, description: Amount in base units }
+      label: { type: string, required: false, description: Address label }
+      chain: { type: string, required: false, description: Address chain }
+    outputs:
+      result: { type: object, description: 'Created address' }
+
+  - name: maximum-spendable
+    description: Get the maximum spendable amount for a wallet.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
       fee-rate: { type: string, required: false, description: Fee rate override }
     outputs:
-      result: { type: object, description: 'Unsigned tx with fee + UTXO/nonce info' }
+      result: { type: object, description: 'Maximum spendable amount' }
 
+  - name: fee-estimate
+    description: Get a fee estimate for a coin.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+    outputs:
+      result: { type: object, description: 'Fee estimate' }
+
+  # ── Tier 2: Transactions and signing ───────────────────────────────
   - name: send-transaction
     description: >
       Build, sign, and broadcast a transaction. Auto-detects wallet
@@ -115,12 +139,26 @@ commands:
     inputs:
       coin: { type: string, required: true, description: Coin ticker }
       wallet-id: { type: string, required: true, description: Wallet ID }
-      address: { type: string, required: true, description: Destination address }
-      amount: { type: string, required: true, description: Amount in base units }
-      wallet-passphrase:
-        { type: string, required: true, description: 'Wallet passphrase for signing' }
-      fee-rate: { type: string, required: false, description: Fee rate override }
+      address:
+        {
+          type: string,
+          required: false,
+          description: 'Destination address (single-recipient shortcut)',
+        }
+      amount:
+        {
+          type: string,
+          required: false,
+          description: 'Amount in base units (single-recipient shortcut)',
+        }
+      recipients:
+        {
+          type: string,
+          required: false,
+          description: 'JSON array of {address, amount} recipients (batch mode)',
+        }
       comment: { type: string, required: false, description: Optional comment }
+      sequence-id: { type: string, required: false, description: Idempotency sequence ID }
       correlation-id:
         {
           type: string,
@@ -142,30 +180,6 @@ commands:
           description: 'Send result. On success: txHash, status="sent". On policy hold: status="pending-approval", pendingApprovalId, correlationId.',
         }
 
-  - name: send-many
-    description: Batch send to multiple recipients in a single transaction.
-    inputs:
-      coin: { type: string, required: true, description: Coin ticker }
-      wallet-id: { type: string, required: true, description: Wallet ID }
-      wallet-passphrase:
-        { type: string, required: true, description: 'Wallet passphrase for signing' }
-      body: { type: string, required: true, description: 'JSON body with recipients array' }
-      correlation-id: { type: string, required: false, description: 'Optional correlation ID' }
-    outputs:
-      result: { type: object, description: 'Send result, same shape as send-transaction' }
-
-  - name: accelerate-transaction
-    description: RBF (Bitcoin) or speed-up (EVM) for a stuck transaction.
-    inputs:
-      coin: { type: string, required: true, description: Coin ticker }
-      wallet-id: { type: string, required: true, description: Wallet ID }
-      tx-id: { type: string, required: true, description: Transaction ID }
-      wallet-passphrase:
-        { type: string, required: true, description: 'Wallet passphrase for signing' }
-      fee-rate: { type: string, required: false, description: New fee rate }
-    outputs:
-      result: { type: object, description: 'Acceleration result' }
-
   - name: get-transaction
     description: Fetch a transaction by hash or BitGo tx ID.
     inputs:
@@ -185,32 +199,40 @@ commands:
     outputs:
       result: { type: object, description: 'Transaction list with pagination cursor' }
 
-  - name: consolidate
-    description: Consolidate UTXOs (UTXO coins only).
+  - name: get-transfer
+    description: Get a transfer by ID.
     inputs:
       coin: { type: string, required: true, description: Coin ticker }
       wallet-id: { type: string, required: true, description: Wallet ID }
-      wallet-passphrase:
-        { type: string, required: true, description: 'Wallet passphrase for signing' }
-      body:
-        {
-          type: string,
-          required: false,
-          description: 'Optional JSON body with consolidation parameters',
-        }
+      transfer-id: { type: string, required: true, description: Transfer ID }
     outputs:
-      result: { type: object, description: 'Consolidation result' }
+      result: { type: object, description: 'Transfer details' }
 
-  - name: sweep
-    description: Sweep entire balance to a target address.
+  - name: list-transfers
+    description: List wallet transfers.
     inputs:
       coin: { type: string, required: true, description: Coin ticker }
       wallet-id: { type: string, required: true, description: Wallet ID }
-      address: { type: string, required: true, description: Destination address }
-      wallet-passphrase:
-        { type: string, required: true, description: 'Wallet passphrase for signing' }
+      limit: { type: number, required: false, description: Result limit }
+      prev-id: { type: string, required: false, description: Pagination cursor }
     outputs:
-      result: { type: object, description: 'Sweep result' }
+      result: { type: object, description: 'Transfer list with pagination cursor' }
+
+  # ── TSS-specific tx requests ──────────────────────────────────────
+  - name: get-tx-request
+    description: Get a TSS transaction request by ID.
+    inputs:
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      tx-request-id: { type: string, required: true, description: Transaction request ID }
+    outputs:
+      result: { type: object, description: 'Transaction request details' }
+
+  - name: list-tx-requests
+    description: List TSS transaction requests for a wallet.
+    inputs:
+      wallet-id: { type: string, required: true, description: Wallet ID }
+    outputs:
+      result: { type: object, description: 'Transaction request list' }
 
   # ── Tier 3: Policy and approval ────────────────────────────────────
   - name: list-policies
@@ -248,16 +270,18 @@ commands:
     outputs:
       result: { type: object, description: 'Pending approval list' }
 
+  - name: get-pending-approval
+    description: Get a single pending approval by ID.
+    inputs:
+      pending-approval-id: { type: string, required: true, description: Pending approval ID }
+    outputs:
+      result: { type: object, description: 'Pending approval details' }
+
   - name: approve-pending
     description: Approve a pending tx or operation.
     inputs:
       pending-approval-id: { type: string, required: true, description: Pending approval ID }
-      wallet-passphrase:
-        {
-          type: string,
-          required: false,
-          description: 'Wallet passphrase if approving a tx that requires signing',
-        }
+      otp: { type: string, required: false, description: One-time password if required }
     outputs:
       result: { type: object, description: 'Resolved approval' }
 
