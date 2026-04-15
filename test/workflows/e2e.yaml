@@ -32,6 +32,7 @@ jobs:
       # ── Wallets ────────────────────────────────────────────────────────────
 
       - name: List wallets
+        id: list_wallets
         uses: w3-io/w3-bitgo-action@v0
         with:
           command: list-wallets
@@ -40,6 +41,11 @@ jobs:
           coin: hteth
           limit: "5"
 
+      - name: Extract wallet ID
+        id: wallet
+        run: |
+          echo "id=$(echo '${{ steps.list_wallets.outputs.result }}' | jq -r '.wallets[0].id')" >> "$GITHUB_OUTPUT"
+
       - name: Get a wallet
         uses: w3-io/w3-bitgo-action@v0
         with:
@@ -47,7 +53,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
 
       - name: Get wallet balance
         uses: w3-io/w3-bitgo-action@v0
@@ -56,7 +62,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
 
       - name: Get maximum spendable
         uses: w3-io/w3-bitgo-action@v0
@@ -65,7 +71,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
 
       - name: Get fee estimate
         uses: w3-io/w3-bitgo-action@v0
@@ -84,7 +90,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
           limit: "5"
 
       - name: Create a new address
@@ -94,7 +100,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
           label: e2e-test-address
 
       # ── Transactions & Transfers ───────────────────────────────────────────
@@ -106,7 +112,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
           limit: "5"
 
       - name: List transfers
@@ -116,7 +122,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
           limit: "5"
 
       # ── TSS Transaction Requests ───────────────────────────────────────────
@@ -128,7 +134,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
 
       # ── Policies ───────────────────────────────────────────────────────────
 
@@ -139,7 +145,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
 
       # ── Pending Approvals ──────────────────────────────────────────────────
 
@@ -150,7 +156,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
 
       # ── Webhooks ───────────────────────────────────────────────────────────
 
@@ -161,4 +167,4 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          wallet-id: ${{ steps.list-wallets.outputs.result.wallets[0].id }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
