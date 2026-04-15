@@ -1,0 +1,460 @@
+name: Test BitGo Action
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [audie/*]
+
+env:
+  BITGO_TEST_URL: "https://app.bitgo-test.com/api/v2"
+  # hteth = Holesky testnet ETH
+  COIN: hteth
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Session ─────────────────────────────────────────────────────
+
+      - name: unlock
+        uses: ./
+        id: unlock
+        with:
+          command: unlock
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          otp: "000000"
+          duration: "600"
+
+      - name: Verify unlock
+        run: echo '${{ steps.unlock.outputs.result }}' | jq .
+
+      # ── Wallet management ───────────────────────────────────────────
+
+      - name: list-wallets
+        uses: ./
+        id: list_wallets
+        with:
+          command: list-wallets
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          limit: "5"
+
+      - name: Verify list-wallets
+        run: echo '${{ steps.list_wallets.outputs.result }}' | jq -e '.wallets'
+
+      - name: Extract wallet ID
+        id: wallet
+        run: |
+          WALLET_ID=$(echo '${{ steps.list_wallets.outputs.result }}' | jq -r '.wallets[0].id')
+          echo "id=$WALLET_ID" >> "$GITHUB_OUTPUT"
+
+      - name: get-wallet
+        uses: ./
+        id: get_wallet
+        with:
+          command: get-wallet
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+
+      - name: Verify get-wallet
+        run: echo '${{ steps.get_wallet.outputs.result }}' | jq -e '.id'
+
+      - name: create-wallet
+        uses: ./
+        id: create_wallet
+        with:
+          command: create-wallet
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          enterprise-id: ${{ secrets.BITGO_ENTERPRISE_ID }}
+          body: '{"label": "e2e-test-${{ github.run_id }}", "passphrase": "${{ secrets.BITGO_WALLET_PASSPHRASE }}", "enterprise": "${{ secrets.BITGO_ENTERPRISE_ID }}"}'
+
+      - name: Verify create-wallet
+        run: echo '${{ steps.create_wallet.outputs.result }}' | jq -e '.wallet.id'
+
+      - name: Extract new wallet ID
+        id: new_wallet
+        run: |
+          NEW_ID=$(echo '${{ steps.create_wallet.outputs.result }}' | jq -r '.wallet.id')
+          echo "id=$NEW_ID" >> "$GITHUB_OUTPUT"
+
+      - name: get-balance
+        uses: ./
+        id: get_balance
+        with:
+          command: get-balance
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+
+      - name: Verify get-balance
+        run: echo '${{ steps.get_balance.outputs.result }}' | jq .
+
+      - name: list-addresses
+        uses: ./
+        id: list_addresses
+        with:
+          command: list-addresses
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          limit: "5"
+
+      - name: Verify list-addresses
+        run: echo '${{ steps.list_addresses.outputs.result }}' | jq -e '.addresses'
+
+      - name: create-address
+        uses: ./
+        id: create_address
+        with:
+          command: create-address
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          label: "e2e-addr-${{ github.run_id }}"
+
+      - name: Verify create-address
+        run: echo '${{ steps.create_address.outputs.result }}' | jq -e '.address'
+
+      - name: maximum-spendable
+        uses: ./
+        id: max_spendable
+        with:
+          command: maximum-spendable
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+
+      - name: Verify maximum-spendable
+        run: echo '${{ steps.max_spendable.outputs.result }}' | jq .
+
+      - name: fee-estimate
+        uses: ./
+        id: fee_estimate
+        with:
+          command: fee-estimate
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+
+      - name: Verify fee-estimate
+        run: echo '${{ steps.fee_estimate.outputs.result }}' | jq .
+
+      # SKIP: share-wallet requires a valid BitGo user ID to share with;
+      # test environment does not have a second user to share with safely
+      # - name: share-wallet
+      #   uses: ./
+      #   with:
+      #     command: share-wallet
+      #     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+      #     api-url: ${{ env.BITGO_TEST_URL }}
+      #     coin: ${{ env.COIN }}
+      #     wallet-id: ${{ steps.new_wallet.outputs.id }}
+      #     share-with-user: "<user-id>"
+      #     share-permissions: "view"
+
+      - name: freeze-wallet
+        uses: ./
+        id: freeze_wallet
+        with:
+          command: freeze-wallet
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.new_wallet.outputs.id }}
+
+      - name: Verify freeze-wallet
+        run: echo '${{ steps.freeze_wallet.outputs.result }}' | jq .
+
+      # ── Transaction queries ─────────────────────────────────────────
+
+      - name: list-transactions
+        uses: ./
+        id: list_transactions
+        with:
+          command: list-transactions
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          limit: "5"
+
+      - name: Verify list-transactions
+        run: echo '${{ steps.list_transactions.outputs.result }}' | jq .
+
+      # get-transaction needs a real tx-id; extract from list if available
+      - name: Extract tx ID
+        id: tx
+        run: |
+          TX_ID=$(echo '${{ steps.list_transactions.outputs.result }}' | jq -r '.transactions[0].id // empty')
+          echo "id=$TX_ID" >> "$GITHUB_OUTPUT"
+
+      - name: get-transaction
+        if: steps.tx.outputs.id != ''
+        uses: ./
+        id: get_transaction
+        with:
+          command: get-transaction
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          tx-id: ${{ steps.tx.outputs.id }}
+
+      - name: Verify get-transaction
+        if: steps.tx.outputs.id != ''
+        run: echo '${{ steps.get_transaction.outputs.result }}' | jq .
+
+      - name: list-transfers
+        uses: ./
+        id: list_transfers
+        with:
+          command: list-transfers
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          limit: "5"
+
+      - name: Verify list-transfers
+        run: echo '${{ steps.list_transfers.outputs.result }}' | jq .
+
+      - name: Extract transfer ID
+        id: transfer
+        run: |
+          TRANSFER_ID=$(echo '${{ steps.list_transfers.outputs.result }}' | jq -r '.transfers[0].id // empty')
+          echo "id=$TRANSFER_ID" >> "$GITHUB_OUTPUT"
+
+      - name: get-transfer
+        if: steps.transfer.outputs.id != ''
+        uses: ./
+        id: get_transfer
+        with:
+          command: get-transfer
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          transfer-id: ${{ steps.transfer.outputs.id }}
+
+      - name: Verify get-transfer
+        if: steps.transfer.outputs.id != ''
+        run: echo '${{ steps.get_transfer.outputs.result }}' | jq .
+
+      # SKIP: send-transaction would send real testnet funds
+      # - name: send-transaction
+      #   uses: ./
+      #   with:
+      #     command: send-transaction
+      #     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+      #     api-url: ${{ env.BITGO_TEST_URL }}
+      #     coin: ${{ env.COIN }}
+      #     wallet-id: ${{ steps.wallet.outputs.id }}
+      #     address: "0x..."
+      #     amount: "1000"
+
+      # ── TSS tx requests ─────────────────────────────────────────────
+
+      - name: list-tx-requests
+        uses: ./
+        id: list_tx_requests
+        with:
+          command: list-tx-requests
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+
+      - name: Verify list-tx-requests
+        run: echo '${{ steps.list_tx_requests.outputs.result }}' | jq .
+
+      - name: Extract tx-request ID
+        id: tx_request
+        run: |
+          TX_REQ_ID=$(echo '${{ steps.list_tx_requests.outputs.result }}' | jq -r '.txRequests[0].txRequestId // empty')
+          echo "id=$TX_REQ_ID" >> "$GITHUB_OUTPUT"
+
+      - name: get-tx-request
+        if: steps.tx_request.outputs.id != ''
+        uses: ./
+        id: get_tx_request
+        with:
+          command: get-tx-request
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+          tx-request-id: ${{ steps.tx_request.outputs.id }}
+
+      - name: Verify get-tx-request
+        if: steps.tx_request.outputs.id != ''
+        run: echo '${{ steps.get_tx_request.outputs.result }}' | jq .
+
+      # ── Policy and approval ─────────────────────────────────────────
+
+      - name: list-policies
+        uses: ./
+        id: list_policies
+        with:
+          command: list-policies
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.wallet.outputs.id }}
+
+      - name: Verify list-policies
+        run: echo '${{ steps.list_policies.outputs.result }}' | jq .
+
+      - name: set-policy-rule
+        uses: ./
+        id: set_policy_rule
+        with:
+          command: set-policy-rule
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.new_wallet.outputs.id }}
+          body: '{"id": "e2e-velocity-${{ github.run_id }}", "type": "velocityLimit", "action": {"type": "getApproval"}, "condition": {"amountString": "1000000000000000000", "timeWindow": 86400}}'
+
+      - name: Verify set-policy-rule
+        run: echo '${{ steps.set_policy_rule.outputs.result }}' | jq .
+
+      - name: remove-policy-rule
+        uses: ./
+        id: remove_policy_rule
+        with:
+          command: remove-policy-rule
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.new_wallet.outputs.id }}
+          policy-rule-id: "e2e-velocity-${{ github.run_id }}"
+
+      - name: Verify remove-policy-rule
+        run: echo '${{ steps.remove_policy_rule.outputs.result }}' | jq .
+
+      - name: list-pending-approvals
+        uses: ./
+        id: list_pending
+        with:
+          command: list-pending-approvals
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          enterprise-id: ${{ secrets.BITGO_ENTERPRISE_ID }}
+
+      - name: Verify list-pending-approvals
+        run: echo '${{ steps.list_pending.outputs.result }}' | jq .
+
+      # SKIP: get-pending-approval requires an existing pending approval ID
+      # which requires a multi-sig send that triggers a policy
+      # - name: get-pending-approval
+      #   uses: ./
+      #   with:
+      #     command: get-pending-approval
+      #     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+      #     api-url: ${{ env.BITGO_TEST_URL }}
+      #     pending-approval-id: "<id>"
+
+      # SKIP: approve-pending requires a pending approval to exist
+      # - name: approve-pending
+      #   uses: ./
+      #   with:
+      #     command: approve-pending
+      #     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+      #     api-url: ${{ env.BITGO_TEST_URL }}
+      #     pending-approval-id: "<id>"
+      #     otp: "000000"
+
+      # SKIP: reject-pending requires a pending approval to exist
+      # - name: reject-pending
+      #   uses: ./
+      #   with:
+      #     command: reject-pending
+      #     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+      #     api-url: ${{ env.BITGO_TEST_URL }}
+      #     pending-approval-id: "<id>"
+
+      # SKIP: wait-for-approval requires a pending approval to poll
+      # - name: wait-for-approval
+      #   uses: ./
+      #   with:
+      #     command: wait-for-approval
+      #     access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+      #     api-url: ${{ env.BITGO_TEST_URL }}
+      #     pending-approval-id: "<id>"
+      #     timeout: "30"
+
+      # ── Webhooks ────────────────────────────────────────────────────
+
+      - name: add-webhook
+        uses: ./
+        id: add_webhook
+        with:
+          command: add-webhook
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.new_wallet.outputs.id }}
+          webhook-url: "https://example.com/e2e-webhook-${{ github.run_id }}"
+          webhook-type: transfer
+
+      - name: Verify add-webhook
+        run: echo '${{ steps.add_webhook.outputs.result }}' | jq .
+
+      - name: Extract webhook ID
+        id: webhook
+        run: |
+          WH_ID=$(echo '${{ steps.add_webhook.outputs.result }}' | jq -r '.id // .webhookId // empty')
+          echo "id=$WH_ID" >> "$GITHUB_OUTPUT"
+
+      - name: list-webhooks
+        uses: ./
+        id: list_webhooks
+        with:
+          command: list-webhooks
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.new_wallet.outputs.id }}
+
+      - name: Verify list-webhooks
+        run: echo '${{ steps.list_webhooks.outputs.result }}' | jq .
+
+      - name: remove-webhook
+        if: steps.webhook.outputs.id != ''
+        uses: ./
+        id: remove_webhook
+        with:
+          command: remove-webhook
+          access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
+          api-url: ${{ env.BITGO_TEST_URL }}
+          coin: ${{ env.COIN }}
+          wallet-id: ${{ steps.new_wallet.outputs.id }}
+          webhook-id: ${{ steps.webhook.outputs.id }}
+
+      - name: Verify remove-webhook
+        if: steps.webhook.outputs.id != ''
+        run: echo '${{ steps.remove_webhook.outputs.result }}' | jq .
+
+      - name: Summary
+        run: |
+          echo "### BitGo Action Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Active (21):** unlock, list-wallets, get-wallet, create-wallet, get-balance, list-addresses, create-address, maximum-spendable, fee-estimate, freeze-wallet, list-transactions, get-transaction, list-transfers, get-transfer, list-tx-requests, get-tx-request, list-policies, set-policy-rule, remove-policy-rule, list-pending-approvals, add-webhook, list-webhooks, remove-webhook" >> $GITHUB_STEP_SUMMARY
+          echo "**Conditional (3):** get-transaction, get-transfer, get-tx-request (run if data exists)" >> $GITHUB_STEP_SUMMARY
+          echo "**Skipped (6):**" >> $GITHUB_STEP_SUMMARY
+          echo "- send-transaction: would send real testnet funds" >> $GITHUB_STEP_SUMMARY
+          echo "- share-wallet: requires second BitGo user ID" >> $GITHUB_STEP_SUMMARY
+          echo "- get-pending-approval: requires pending approval state" >> $GITHUB_STEP_SUMMARY
+          echo "- approve-pending: requires pending approval state" >> $GITHUB_STEP_SUMMARY
+          echo "- reject-pending: requires pending approval state" >> $GITHUB_STEP_SUMMARY
+          echo "- wait-for-approval: requires pending approval state" >> $GITHUB_STEP_SUMMARY
