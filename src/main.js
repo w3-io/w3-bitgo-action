@@ -78,6 +78,15 @@ const handlers = {
     setJsonOutput('result', result)
   },
 
+  'delete-wallet': async () => {
+    const client = getClient()
+    const result = await client.deleteWallet(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
   'freeze-wallet': async () => {
     const client = getClient()
     const result = await client.freezeWallet(
@@ -336,6 +345,29 @@ const handlers = {
   'remove-webhook': async () => {
     const client = getClient()
     const result = await client.removeWebhook(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      core.getInput('webhook-id', { required: true }),
+    )
+    setJsonOutput('result', result)
+  },
+
+  'create-webhook': async () => {
+    const client = getClient()
+    const result = await client.createWebhook(
+      core.getInput('coin', { required: true }),
+      core.getInput('wallet-id', { required: true }),
+      {
+        url: core.getInput('webhook-url', { required: true }),
+        type: core.getInput('webhook-type') || undefined,
+      },
+    )
+    setJsonOutput('result', result)
+  },
+
+  'delete-webhook': async () => {
+    const client = getClient()
+    const result = await client.deleteWebhook(
       core.getInput('coin', { required: true }),
       core.getInput('wallet-id', { required: true }),
       core.getInput('webhook-id', { required: true }),

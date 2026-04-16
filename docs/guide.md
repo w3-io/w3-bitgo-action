@@ -1,6 +1,6 @@
 # W3 BitGo Action — Reference Guide
 
-Custodial-wallet treasury automation against BitGo's platform REST API. 27 commands across session, wallet management, sends, transfers, TSS tx requests, policy + approval, synchronous wait, and webhooks.
+Custodial-wallet treasury automation against BitGo's platform REST API. 30 commands across session, wallet management, sends, transfers, TSS tx requests, policy + approval, synchronous wait, and webhooks.
 
 ## Scope
 
@@ -101,6 +101,17 @@ Create a new wallet. The wallet creation schema is rich and varies per coin, so 
 | `enterprise-id` | no       | Defaults to the constructor enterprise ID.                                          |
 
 **Output:** The created wallet object.
+
+### `delete-wallet`
+
+Permanently delete a wallet. This is a destructive operation -- ensure the wallet has been drained first.
+
+| Input       | Required | Description  |
+| ----------- | -------- | ------------ |
+| `coin`      | yes      | Coin ticker. |
+| `wallet-id` | yes      | Wallet ID.   |
+
+**Output:** Deletion confirmation from BitGo.
 
 ### `share-wallet`
 
@@ -440,6 +451,27 @@ For long-tail approvals (multi-party manual approval that may take hours), prefe
 | `wallet-id`  | yes      | Wallet ID.                                                 |
 | `webhook-id` | yes      | Webhook ID returned from `add-webhook` or `list-webhooks`. |
 
+### `create-webhook`
+
+Alias for `add-webhook`. Same endpoint and behavior -- provided for naming symmetry with `delete-webhook`.
+
+| Input          | Required | Description                                                                       |
+| -------------- | -------- | --------------------------------------------------------------------------------- |
+| `coin`         | yes      | Coin ticker.                                                                      |
+| `wallet-id`    | yes      | Wallet ID.                                                                        |
+| `webhook-url`  | yes      | HTTPS callback URL.                                                               |
+| `webhook-type` | no       | `transfer`, `pendingApproval`, `address_confirmation`. Default `pendingApproval`. |
+
+### `delete-webhook`
+
+Alias for `remove-webhook`. Same endpoint and behavior -- provided for naming symmetry with `create-webhook`.
+
+| Input        | Required | Description                                                |
+| ------------ | -------- | ---------------------------------------------------------- |
+| `coin`       | yes      | Coin ticker.                                               |
+| `wallet-id`  | yes      | Wallet ID.                                                 |
+| `webhook-id` | yes      | Webhook ID returned from `add-webhook` or `list-webhooks`. |
+
 ---
 
 ## Three-layer approval reactivity
@@ -486,6 +518,24 @@ echo -n 'JBSWY3DPEHPK3PXP' | base32 -d | xxd -p -c 256
 ```
 
 Test environment accepts the magic OTP `000000` directly without going through `crypto: totp`.
+
+---
+
+## BitGo Express vs Platform API
+
+BitGo exposes two API surfaces. This action routes every command to the correct one automatically, but understanding the split helps when debugging or reading BitGo's docs.
+
+**Platform API** (`app.bitgo.com/api/v2`) is the hosted service that handles wallet metadata, policy, approvals, webhooks, and custodial signing. Most commands in this action -- `list-wallets`, `get-wallet`, `create-wallet`, `delete-wallet`, `list-addresses`, `get-balance`, `list-policies`, `set-policy-rule`, `add-webhook`, `create-webhook`, `delete-webhook`, `remove-webhook`, `list-webhooks`, `list-pending-approvals`, `approve-pending`, `reject-pending`, `wait-for-approval`, and all transaction/transfer query commands -- hit the Platform API directly.
+
+**BitGo Express** is a self-hosted Node.js service that bundles `@bitgo/sdk-core` and performs local cryptographic signing before forwarding transactions to the platform. The legacy `sendcoins`, `sendmany`, and other signing endpoints live here. Calling them on the Platform API returns _"You have called a BitGo Express endpoint but this is the BitGo server."_
+
+This action does **not** require or use BitGo Express. Custodial wallets sign server-side (BitGo holds the keys), so the send flow works entirely over the Platform API:
+
+- **TSS custodial sends** route through `POST /wallet/{walletId}/txrequests` (no coin prefix) on the Platform API.
+- **Multi-sig (onchain) custodial sends** route through `POST /{coin}/wallet/{walletId}/tx/initiate` on the Platform API.
+- **Address creation** (`create-address`) also hits the Platform API at `POST /{coin}/wallet/{walletId}/address`.
+
+If you need to drive hot or self-managed wallets that require local signing, use BitGo Express as a sidecar or the `@bitgo/sdk-core` SDK directly -- this action will reject non-custodial wallets with `UNSUPPORTED_WALLET_TYPE`.
 
 ---
 

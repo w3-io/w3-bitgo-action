@@ -6,14 +6,15 @@ inputs:
   command:
     description: >
       Operation to perform. Session: unlock. Wallets: list-wallets, get-wallet,
-      create-wallet, share-wallet, freeze-wallet, get-balance, list-addresses,
-      create-address, maximum-spendable, fee-estimate. Sends and tx queries:
-      send-transaction, get-transaction, list-transactions, get-transfer,
-      list-transfers. TSS tx requests: get-tx-request, list-tx-requests.
-      Policy and approval: list-policies, set-policy-rule, remove-policy-rule,
-      list-pending-approvals, get-pending-approval, approve-pending,
-      reject-pending, wait-for-approval. Webhooks: add-webhook, list-webhooks,
-      remove-webhook.
+      create-wallet, delete-wallet, share-wallet, freeze-wallet, get-balance,
+      list-addresses, create-address, maximum-spendable, fee-estimate. Sends
+      and tx queries: send-transaction, get-transaction, list-transactions,
+      get-transfer, list-transfers. TSS tx requests: get-tx-request,
+      list-tx-requests. Policy and approval: list-policies, set-policy-rule,
+      remove-policy-rule, list-pending-approvals, get-pending-approval,
+      approve-pending, reject-pending, wait-for-approval. Webhooks:
+      add-webhook, create-webhook, list-webhooks, remove-webhook,
+      delete-webhook.
     required: true
 
   # Authentication
