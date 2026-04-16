@@ -6,7 +6,7 @@ on:
     branches: [audie/*]
 
 env:
-  BITGO_TEST_URL: "https://app.bitgo-test.com/api/v2"
+  BITGO_TEST_URL: 'https://app.bitgo-test.com/api/v2'
   # hteth = Holesky testnet ETH
   COIN: hteth
 
@@ -25,8 +25,8 @@ jobs:
           command: unlock
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: ${{ env.BITGO_TEST_URL }}
-          otp: "000000"
-          duration: "600"
+          otp: '000000'
+          duration: '600'
 
       - name: Verify unlock
         run: echo '${{ steps.unlock.outputs.result }}' | jq .
@@ -41,7 +41,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
-          limit: "5"
+          limit: '5'
 
       - name: Verify list-wallets
         run: echo '${{ steps.list_wallets.outputs.result }}' | jq -e '.wallets'
@@ -107,7 +107,7 @@ jobs:
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
           wallet-id: ${{ steps.wallet.outputs.id }}
-          limit: "5"
+          limit: '5'
 
       - name: Verify list-addresses
         run: echo '${{ steps.list_addresses.outputs.result }}' | jq -e '.addresses'
@@ -121,7 +121,7 @@ jobs:
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
           wallet-id: ${{ steps.wallet.outputs.id }}
-          label: "e2e-addr-${{ github.run_id }}"
+          label: 'e2e-addr-${{ github.run_id }}'
 
       - name: Verify create-address
         run: echo '${{ steps.create_address.outputs.result }}' | jq -e '.address'
@@ -188,7 +188,7 @@ jobs:
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
           wallet-id: ${{ steps.wallet.outputs.id }}
-          limit: "5"
+          limit: '5'
 
       - name: Verify list-transactions
         run: echo '${{ steps.list_transactions.outputs.result }}' | jq .
@@ -225,7 +225,7 @@ jobs:
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
           wallet-id: ${{ steps.wallet.outputs.id }}
-          limit: "5"
+          limit: '5'
 
       - name: Verify list-transfers
         run: echo '${{ steps.list_transfers.outputs.result }}' | jq .
@@ -337,7 +337,7 @@ jobs:
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
           wallet-id: ${{ steps.new_wallet.outputs.id }}
-          policy-rule-id: "e2e-velocity-${{ github.run_id }}"
+          policy-rule-id: 'e2e-velocity-${{ github.run_id }}'
 
       - name: Verify remove-policy-rule
         run: echo '${{ steps.remove_policy_rule.outputs.result }}' | jq .
@@ -404,7 +404,7 @@ jobs:
           api-url: ${{ env.BITGO_TEST_URL }}
           coin: ${{ env.COIN }}
           wallet-id: ${{ steps.new_wallet.outputs.id }}
-          webhook-url: "https://example.com/e2e-webhook-${{ github.run_id }}"
+          webhook-url: 'https://example.com/e2e-webhook-${{ github.run_id }}'
           webhook-type: transfer
 
       - name: Verify add-webhook
