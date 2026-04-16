@@ -26,8 +26,8 @@ jobs:
           command: unlock
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
-          otp: "000000"
-          duration: "600"
+          otp: '000000'
+          duration: '600'
 
       # ── Wallets ────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ jobs:
           access-token: ${{ secrets.BITGO_ACCESS_TOKEN }}
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
-          limit: "5"
+          limit: '5'
 
       - name: Extract wallet ID
         id: wallet
@@ -91,7 +91,7 @@ jobs:
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
           wallet-id: ${{ steps.wallet.outputs.id }}
-          limit: "5"
+          limit: '5'
 
       - name: Create a new address
         uses: w3-io/w3-bitgo-action@v0
@@ -113,7 +113,7 @@ jobs:
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
           wallet-id: ${{ steps.wallet.outputs.id }}
-          limit: "5"
+          limit: '5'
 
       - name: List transfers
         uses: w3-io/w3-bitgo-action@v0
@@ -123,7 +123,7 @@ jobs:
           api-url: https://app.bitgo-test.com/api/v2
           coin: hteth
           wallet-id: ${{ steps.wallet.outputs.id }}
-          limit: "5"
+          limit: '5'
 
       # ── TSS Transaction Requests ───────────────────────────────────────────
 
