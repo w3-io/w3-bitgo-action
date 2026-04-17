@@ -59,6 +59,14 @@ commands:
     outputs:
       result: { type: object, description: 'Created wallet object' }
 
+  - name: delete-wallet
+    description: Delete a wallet by ID.
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+    outputs:
+      result: { type: object, description: 'Deletion confirmation' }
+
   - name: share-wallet
     description: Share a wallet with another BitGo user.
     inputs:
@@ -345,3 +353,27 @@ commands:
       webhook-id: { type: string, required: true, description: Webhook ID }
     outputs:
       result: { type: object, description: 'Removal confirmation' }
+
+  - name: create-webhook
+    description: Create a webhook on a wallet (alias for add-webhook).
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      webhook-url: { type: string, required: true, description: Callback URL }
+      webhook-type:
+        {
+          type: string,
+          required: false,
+          description: 'Event type: transfer | pendingApproval | address_confirmation (default pendingApproval)',
+        }
+    outputs:
+      result: { type: object, description: 'Created webhook' }
+
+  - name: delete-webhook
+    description: Delete a webhook by ID (alias for remove-webhook).
+    inputs:
+      coin: { type: string, required: true, description: Coin ticker }
+      wallet-id: { type: string, required: true, description: Wallet ID }
+      webhook-id: { type: string, required: true, description: Webhook ID }
+    outputs:
+      result: { type: object, description: 'Deletion confirmation' }

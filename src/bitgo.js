@@ -279,6 +279,14 @@ export class BitGoClient {
     })
   }
 
+  async deleteWallet(coin, walletId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    return this._request(`/${coin}/wallet/${walletId}`, {
+      method: 'DELETE',
+    })
+  }
+
   async freezeWallet(coin, walletId, body = {}) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
@@ -736,6 +744,33 @@ export class BitGoClient {
   }
 
   async removeWebhook(coin, walletId, webhookId) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('webhook-id', webhookId)
+    return this._request(`/${coin}/wallet/${walletId}/webhooks/${webhookId}`, {
+      method: 'DELETE',
+    })
+  }
+
+  /**
+   * Create a webhook on a wallet. Alias for addWebhook with the same
+   * underlying endpoint: POST /api/v2/{coin}/wallet/{walletId}/webhooks.
+   */
+  async createWebhook(coin, walletId, { url, type = 'pendingApproval' } = {}) {
+    requireParam('coin', coin)
+    requireParam('wallet-id', walletId)
+    requireParam('webhook-url', url)
+    return this._request(`/${coin}/wallet/${walletId}/webhooks`, {
+      method: 'POST',
+      body: { url, type },
+    })
+  }
+
+  /**
+   * Delete a webhook by ID. Alias for removeWebhook with the same
+   * underlying endpoint: DELETE /api/v2/{coin}/wallet/{walletId}/webhooks/{webhookId}.
+   */
+  async deleteWebhook(coin, walletId, webhookId) {
     requireParam('coin', coin)
     requireParam('wallet-id', walletId)
     requireParam('webhook-id', webhookId)

@@ -224,6 +224,35 @@ describe('BitGoClient: getBalance', () => {
   })
 })
 
+describe('BitGoClient: deleteWallet', () => {
+  it('DELETEs the wallet by coin and wallet id', async () => {
+    mockFetch([{ body: { deleted: true } }])
+    const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })
+
+    const result = await client.deleteWallet('btc', 'w1')
+
+    assert.equal(calls[0].url, `${API_URL}/btc/wallet/w1`)
+    assert.equal(calls[0].options.method, 'DELETE')
+    assert.equal(result.deleted, true)
+  })
+
+  it('requires coin', async () => {
+    const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })
+    await assert.rejects(
+      () => client.deleteWallet('', 'w1'),
+      (err) => err instanceof BitGoError && err.code === 'MISSING_COIN',
+    )
+  })
+
+  it('requires wallet-id', async () => {
+    const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })
+    await assert.rejects(
+      () => client.deleteWallet('btc', ''),
+      (err) => err instanceof BitGoError && err.code === 'MISSING_WALLET_ID',
+    )
+  })
+})
+
 describe('BitGoClient: missing required params', () => {
   it('throws MISSING_COIN when coin is empty', async () => {
     const client = new BitGoClient({ accessToken: ACCESS_TOKEN, apiUrl: API_URL })

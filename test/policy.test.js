@@ -384,3 +384,59 @@ describe('removeWebhook', () => {
     )
   })
 })
+
+// ── createWebhook (alias for addWebhook) ───────────────────────
+
+describe('createWebhook', () => {
+  it('POSTs the webhook url and type', async () => {
+    mockFetch([{ body: { id: 'wh1', url: 'https://example.com/hook' } }])
+    const client = newClient()
+    const result = await client.createWebhook('btc', 'wallet1', {
+      url: 'https://example.com/hook',
+      type: 'transfer',
+    })
+    assert.equal(calls[0].url, `${API_URL}/btc/wallet/wallet1/webhooks`)
+    assert.equal(calls[0].options.method, 'POST')
+    assert.deepEqual(JSON.parse(calls[0].options.body), {
+      url: 'https://example.com/hook',
+      type: 'transfer',
+    })
+    assert.equal(result.id, 'wh1')
+  })
+
+  it('defaults the type to pendingApproval', async () => {
+    mockFetch([{ body: { id: 'wh1' } }])
+    const client = newClient()
+    await client.createWebhook('btc', 'wallet1', { url: 'https://example.com/hook' })
+    const body = JSON.parse(calls[0].options.body)
+    assert.equal(body.type, 'pendingApproval')
+  })
+
+  it('requires a webhook url', async () => {
+    const client = newClient()
+    await assert.rejects(
+      () => client.createWebhook('btc', 'wallet1', { url: '' }),
+      (err) => err instanceof BitGoError && err.code === 'MISSING_WEBHOOK_URL',
+    )
+  })
+})
+
+// ── deleteWebhook (alias for removeWebhook) ────────────────────
+
+describe('deleteWebhook', () => {
+  it('DELETEs the webhook by id', async () => {
+    mockFetch([{ body: { removed: true } }])
+    const client = newClient()
+    await client.deleteWebhook('btc', 'wallet1', 'wh1')
+    assert.equal(calls[0].url, `${API_URL}/btc/wallet/wallet1/webhooks/wh1`)
+    assert.equal(calls[0].options.method, 'DELETE')
+  })
+
+  it('requires a webhook id', async () => {
+    const client = newClient()
+    await assert.rejects(
+      () => client.deleteWebhook('btc', 'wallet1', ''),
+      (err) => err instanceof BitGoError && err.code === 'MISSING_WEBHOOK_ID',
+    )
+  })
+})

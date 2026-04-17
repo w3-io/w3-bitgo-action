@@ -9,19 +9,17 @@
 
 ## API surface — not yet exposed
 
-- [ ] `create-wallet` / `delete-wallet` — lifecycle commands behind
-      BitGo's `/api/v2/{coin}/wallet/generate` endpoint. Useful for
-      demos but needs careful handling of the enterprise ID + policy
-      defaults.
+- [x] `create-wallet` / `delete-wallet` — lifecycle commands behind
+      BitGo's `/api/v2/{coin}/wallet/generate` endpoint. `create-wallet`
+      shipped earlier; `delete-wallet` added in this pass.
 - [ ] TSS (multi-sig) commands: `create-tx-request`,
       `approve-tx-request`, `reject-tx-request`. Our action currently
       only lists TSS requests; writing them requires the second
       signer's keypair which is out-of-band.
-- [ ] Webhooks: `create-webhook` / `delete-webhook`. List already
-      works; adding CRUD would complete the webhooks surface.
+- [x] Webhooks: `create-webhook` / `delete-webhook`. List already
+      works; CRUD surface is now complete.
 
 ## Docs
 
-- [ ] Document the BitGo Express vs Platform API dispatch pattern in
-      `docs/guide.md`. Today this is captured in memory but not in
-      the repo.
+- [x] Document the BitGo Express vs Platform API dispatch pattern in
+      `docs/guide.md`.
